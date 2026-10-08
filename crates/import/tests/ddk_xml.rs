@@ -28,7 +28,7 @@ fn imports_ddk_project() {
         .into_iter()
         .map(|h| h.title)
         .collect();
-    assert_eq!(titles, ["made", "make", "make it", "makes"]);
+    assert_eq!(titles, ["made", "make", "makes", "make it"]);
 
     let make_it = &d.lookup("make it").unwrap()[0];
     assert_eq!(make_it.anchor.as_deref(), Some("make_it"));

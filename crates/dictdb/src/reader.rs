@@ -29,6 +29,22 @@ pub struct Hit {
     pub parental: bool,
 }
 
+impl Hit {
+    /// Search ranking tier for a hit on `normalized_query` (see
+    /// [`normalize_key`]): 0 for an exact match, 1 for a headword (a key for a
+    /// whole entry), 2 for a phrase (a key pointing at an anchor inside an
+    /// entry, e.g. an idiom).
+    pub fn tier(&self, normalized_query: &str) -> u8 {
+        if self.key == normalized_query {
+            0
+        } else if self.anchor.is_none() {
+            1
+        } else {
+            2
+        }
+    }
+}
+
 /// An open, memory-mapped `.dictdb` directory.
 pub struct Dictionary {
     path: PathBuf,
@@ -96,30 +112,44 @@ impl Dictionary {
     }
 
     /// Returns up to `limit` hits whose key starts with the normalized `query`,
-    /// in key order (so an exact match comes first).
+    /// ordered by [`Hit::tier`] (exact matches, then headwords, then phrases)
+    /// and then by key.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>> {
         let query = normalize_key(query);
-        let mut hits = Vec::new();
         if query.is_empty() || limit == 0 {
-            return Ok(hits);
+            return Ok(Vec::new());
         }
+        let mut tiers: [Vec<Hit>; 3] = Default::default();
         let mut seen = HashSet::new();
         let mut stream = self.keys.range().ge(&query).into_stream();
         while let Some((key, offset)) = stream.next() {
             if !key.starts_with(query.as_bytes()) {
                 break;
             }
+            let exact = key == query.as_bytes();
             let key = String::from_utf8_lossy(key).into_owned();
             for posting in self.postings_at(offset)? {
-                if !seen.insert((posting.entry, posting.title)) {
+                // Same ranking as `Hit::tier`, decided before building the hit
+                // so phrases past the limit cost no allocations.
+                let tier = match (exact, posting.anchor == NO_STRING) {
+                    (true, _) => 0,
+                    (false, true) => 1,
+                    (false, false) => 2,
+                };
+                if tiers[tier].len() >= limit || !seen.insert((posting.entry, posting.title)) {
                     continue;
                 }
-                hits.push(self.make_hit(&key, &posting)?);
-                if hits.len() == limit {
-                    return Ok(hits);
-                }
+                let hit = self.make_hit(&key, &posting)?;
+                tiers[tier].push(hit);
+            }
+            // Keys arrive in order, so once the better tiers are full nothing
+            // later can displace them; phrases only fill what is left.
+            if tiers[0].len() + tiers[1].len() >= limit {
+                break;
             }
         }
+        let mut hits: Vec<Hit> = tiers.into_iter().flatten().collect();
+        hits.truncate(limit);
         Ok(hits)
     }
 

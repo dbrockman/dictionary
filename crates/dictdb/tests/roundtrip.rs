@@ -139,3 +139,70 @@ fn rewriting_replaces_previous_dictionary() {
     assert!(d.lookup("first").unwrap().is_empty());
     assert_eq!(d.lookup("second").unwrap().len(), 1);
 }
+
+#[test]
+fn ranks_exact_matches_then_headwords_then_phrases() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("rank.dictdb");
+    let mut w = DictWriter::create(&path, info()).unwrap();
+    let make = w.add_entry("make", "make").unwrap();
+    let maker = w.add_entry("maker", "maker").unwrap();
+    let making = w.add_entry("making", "making").unwrap();
+    w.add_key(make, key("make"));
+    for phrase in ["make a face", "make do", "make it"] {
+        w.add_key(
+            make,
+            KeySpec {
+                keyword: phrase,
+                anchor: Some(phrase),
+                ..Default::default()
+            },
+        );
+    }
+    w.add_key(maker, key("maker"));
+    w.add_key(making, key("making"));
+    // A multi-word headword is still a headword.
+    let happy_hour = w.add_entry("happy_hour", "happy hour").unwrap();
+    w.add_key(happy_hour, key("make hay"));
+    w.finish().unwrap();
+
+    let d = Dictionary::open(&path).unwrap();
+    let titles = |q: &str, limit| -> Vec<String> {
+        d.search(q, limit)
+            .unwrap()
+            .into_iter()
+            .map(|h| h.title)
+            .collect()
+    };
+    assert_eq!(
+        titles("make", 10),
+        [
+            "make",
+            "make hay",
+            "maker",
+            "make a face",
+            "make do",
+            "make it"
+        ]
+    );
+    assert_eq!(
+        titles("mak", 10),
+        [
+            "make",
+            "make hay",
+            "maker",
+            "making",
+            "make a face",
+            "make do",
+            "make it"
+        ]
+    );
+    // An exact phrase match comes first.
+    assert_eq!(titles("make do", 10), ["make do"]);
+    // Limits keep the better tiers.
+    assert_eq!(titles("mak", 3), ["make", "make hay", "maker"]);
+    assert_eq!(
+        titles("mak", 5),
+        ["make", "make hay", "maker", "making", "make a face"]
+    );
+}

@@ -263,7 +263,7 @@ fn check(layout: Layout) {
         .into_iter()
         .map(|h| h.title)
         .collect();
-    assert_eq!(titles, ["made (make)", "make", "make it", "maker", "makes"]);
+    assert_eq!(titles, ["made (make)", "make", "maker", "makes", "make it"]);
 
     let make_it = &d.lookup("make it").unwrap()[0];
     assert_eq!(make_it.anchor.as_deref(), Some("m_en_1.007"));

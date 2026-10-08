@@ -17,8 +17,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let Some(word) = word else { return Ok(()) };
     let start = Instant::now();
     let hits = dict.search(&word, 20)?;
+    let first = start.elapsed();
+    let start = Instant::now();
+    dict.search(&word, 20)?;
     println!(
-        "\nsearch {word:?}: {} hits in {:?}",
+        "\nsearch {word:?}: {} hits in {first:?} (again: {:?})",
         hits.len(),
         start.elapsed()
     );

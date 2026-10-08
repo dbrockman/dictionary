@@ -106,8 +106,9 @@ impl Library {
         self.dicts.is_empty()
     }
 
-    /// Prefix search over one dictionary (`scope`) or all of them, ordered by
-    /// key and then by dictionary.
+    /// Prefix search over one dictionary (`scope`) or all of them: exact
+    /// matches, then headwords, then phrases (see [`Hit::tier`]), each by key
+    /// and then by dictionary.
     pub fn search(&self, query: &str, scope: Option<usize>) -> Vec<Row> {
         let mut rows = Vec::new();
         for (index, dict) in self.dicts.iter().enumerate() {
@@ -120,7 +121,11 @@ impl Library {
             }
         }
         if scope.is_none() && self.dicts.len() > 1 {
-            rows.sort_by(|a, b| a.hit.key.cmp(&b.hit.key));
+            let query = dictdb::normalize_key(query);
+            // Stable, so equal keys keep dictionary order.
+            rows.sort_by(|a, b| {
+                (a.hit.tier(&query), &a.hit.key).cmp(&(b.hit.tier(&query), &b.hit.key))
+            });
             rows.truncate(RESULT_LIMIT);
         }
         rows
