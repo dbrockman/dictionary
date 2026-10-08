@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      # The flake's dev shell provides the same Rust toolchain and the system
+      # libraries GPUI links against as local development.
+      - uses: cachix/install-nix-action@v31
+
+      - name: Prepare dev shell
+        run: nix develop --command rustc --version
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: nix develop --command cargo fmt --all --check
+
+      - name: Clippy
+        run: nix develop --command cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      # The real-dictionary test skips itself, since data/ is not in the repository.
+      - name: Test
+        run: nix develop --command cargo test --workspace --locked
