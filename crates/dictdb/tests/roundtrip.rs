@@ -83,6 +83,11 @@ fn write_then_read() {
     assert_eq!(hits[0].title, "make");
     assert_eq!(hits[0].entry_title.as_deref(), Some("make¹"));
     assert_eq!(hits[0].entry_detail.as_deref(), Some("verb"));
+    assert_eq!(
+        d.entry_label(make).unwrap(),
+        (Some("make¹".into()), Some("verb".into()))
+    );
+    assert!(d.entry_label(99).is_err());
     assert_eq!(hits[1].anchor.as_deref(), Some("make_it"));
     assert!(hits[1].parental);
 

@@ -6,10 +6,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use gpui_kit::base::TextSelection;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Escape, Input, InputEvent, InputState, MoveDown, MoveUp, SelectAll,
 };
+use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{
     ResizablePanelEvent, ResizableState, h_resizable, resizable_panel,
@@ -52,6 +54,7 @@ actions!(
 pub struct SelectScope(pub usize);
 
 const KEY_CONTEXT: &str = "Dictionary";
+const APP_NAME: &str = "Dictionary";
 const ROW_HEIGHT: f32 = 30.;
 /// Default width of the result list, in rems.
 const RESULTS_WIDTH: f32 = 18.;
@@ -131,6 +134,8 @@ pub struct AppView {
     split: Entity<ResizableState>,
     /// Keeps app shortcuts working when focus is not in the search field.
     focus_handle: FocusHandle,
+    /// The title last given to the window, so it is only set when it changes.
+    window_title: SharedString,
     import: Option<ImportJob>,
     _subscriptions: Vec<Subscription>,
 }
@@ -170,6 +175,7 @@ impl AppView {
             scope_scroll: ScrollHandle::new(),
             split,
             focus_handle: cx.focus_handle(),
+            window_title: APP_NAME.into(),
             import: None,
             _subscriptions: subscriptions,
         };
@@ -848,6 +854,7 @@ impl AppView {
                                         this.select(ix, true, cx);
                                         this.search.update(cx, |state, cx| state.focus(window, cx));
                                     }))
+                                    .context_menu(this.row_menu(ix, cx))
                             })
                             .collect()
                     }),
@@ -856,6 +863,102 @@ impl AppView {
                 .track_scroll(&self.list_scroll),
             )
             .vertical_scrollbar(&self.list_scroll)
+    }
+
+    /// Commands for the result row at `ix`: copy its word and, when searching
+    /// all dictionaries, narrow the search to the row's dictionary.
+    fn row_menu(
+        &self,
+        ix: usize,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let row = &self.rows[ix];
+        let label = row.label().to_owned();
+        let enabled = self.enabled_dicts();
+        let narrow = self
+            .scope
+            .is_none()
+            .then(|| enabled.iter().position(|&d| d == row.dict))
+            .flatten()
+            .filter(|_| enabled.len() > 1)
+            .map(|position| {
+                let name = self.library.dicts()[row.dict].meta().name.clone();
+                (SelectScope(position + 1), name)
+            });
+        let view = cx.weak_entity();
+        move |menu, _, _| {
+            let word = label.clone();
+            let menu = menu.item(PopupMenuItem::new(format!("Copy “{label}”")).on_click(
+                move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(word.clone()));
+                },
+            ));
+            match &narrow {
+                Some((action, name)) => {
+                    let (action, view) = (action.clone(), view.clone());
+                    menu.item(PopupMenuItem::new(format!("Search only {name}")).on_click(
+                        move |_, window, cx| {
+                            view.update(cx, |this, cx| this.select_scope(&action, window, cx))
+                                .ok();
+                        },
+                    ))
+                }
+                None => menu,
+            }
+        }
+    }
+
+    /// Commands for the definition pane, which act on the selected text.
+    fn definition_menu(
+        &self,
+        cx: &Context<Self>,
+    ) -> impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static {
+        let view = cx.weak_entity();
+        move |menu, window, cx| {
+            let selected = TextSelection::selected_text(window, cx).trim().to_owned();
+            // Only a word or short phrase is worth looking up.
+            let lookup = (!selected.is_empty()
+                && selected.chars().count() <= 60
+                && !selected.contains('\n'))
+            .then(|| selected.clone());
+            let menu = menu.item(
+                PopupMenuItem::new("Copy")
+                    .disabled(selected.is_empty())
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(selected.clone()));
+                    }),
+            );
+            match lookup {
+                Some(word) => {
+                    let view = view.clone();
+                    menu.item(PopupMenuItem::new(format!("Look up “{word}”")).on_click(
+                        move |_, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.remember_current();
+                                this.set_query(&word, window, cx);
+                                this.search.update(cx, |state, cx| state.focus(window, cx));
+                            })
+                            .ok();
+                        },
+                    ))
+                }
+                None => menu,
+            }
+        }
+    }
+
+    /// The window title: the entry on screen, or the app's name.
+    fn title(&self) -> SharedString {
+        let entry = self
+            .shown
+            .as_ref()
+            .filter(|_| self.mode == Mode::Dictionary);
+        entry
+            .and_then(|shown| {
+                self.library
+                    .entry_window_title(shown.page.dict, shown.page.entry)
+            })
+            .map_or_else(|| APP_NAME.into(), SharedString::from)
     }
 
     /// The definition pane when no entry is shown, with the next step.
@@ -930,6 +1033,7 @@ impl AppView {
         let this = cx.weak_entity();
         let identifier = &self.library.dicts()[shown.page.dict].meta().identifier;
         let id = SharedString::from(format!("entry-{identifier}-{}", shown.page.entry));
+        let menu = self.definition_menu(cx);
         div()
             .flex_1()
             .size_full()
@@ -948,6 +1052,7 @@ impl AppView {
                             .ok();
                     }),
             )
+            .context_menu(menu)
             .into_any_element()
     }
 }
@@ -976,6 +1081,11 @@ fn pane_message(
 
 impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let title = self.title();
+        if title != self.window_title {
+            window.set_window_title(&title);
+            self.window_title = title.clone();
+        }
         v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
@@ -991,7 +1101,17 @@ impl Render for AppView {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(TitleBar::new().child(div().text_sm().child("Dictionary")))
+            .child(
+                TitleBar::new().child(
+                    div()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_sm()
+                        .child(title),
+                ),
+            )
             .map(|el| match self.mode {
                 Mode::Dictionary => el
                     .child(self.render_toolbar(cx))

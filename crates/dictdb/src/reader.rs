@@ -256,17 +256,32 @@ impl Dictionary {
             .collect())
     }
 
+    /// The title and detail stored for `entry` (see [`EntrySpec`]), if the
+    /// importer recorded them.
+    ///
+    /// [`EntrySpec`]: crate::EntrySpec
+    pub fn entry_label(&self, entry: u32) -> Result<(Option<String>, Option<String>)> {
+        if entry >= self.meta.entry_count {
+            return Err(Error::NoSuchEntry(entry));
+        }
+        let at = IDX_HEADER_LEN + entry as usize * IDX_ENTRY_LEN;
+        Ok((
+            self.string(read_u32(&self.index, at + 12))?,
+            self.string(read_u32(&self.index, at + 16))?,
+        ))
+    }
+
     fn make_hit(&self, key: &str, p: &RawPosting) -> Result<Hit> {
         if p.entry >= self.meta.entry_count {
             return Err(self.corrupt("posting points past the last entry"));
         }
-        let at = IDX_HEADER_LEN + p.entry as usize * IDX_ENTRY_LEN;
+        let (entry_title, entry_detail) = self.entry_label(p.entry)?;
         Ok(Hit {
             key: key.to_owned(),
             title: self.string(p.title)?.unwrap_or_default(),
             entry: p.entry,
-            entry_title: self.string(read_u32(&self.index, at + 12))?,
-            entry_detail: self.string(read_u32(&self.index, at + 16))?,
+            entry_title,
+            entry_detail,
             anchor: self.string(p.anchor)?,
             priority: p.priority,
             parental: p.flags & FLAG_PARENTAL != 0,

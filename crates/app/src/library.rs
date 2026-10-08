@@ -198,6 +198,20 @@ impl Library {
         rows
     }
 
+    /// What the window title shows for an entry: its headword and dictionary,
+    /// e.g. `set¹ — Oxford Dictionary of English`, or just the dictionary
+    /// when the importer recorded no headword.
+    pub fn entry_window_title(&self, dict: usize, entry: u32) -> Option<String> {
+        let d = self.dicts.get(dict)?;
+        let name = &d.meta().name;
+        Some(
+            match d.entry_label(entry).ok().and_then(|(title, _)| title) {
+                Some(title) => format!("{title} — {name}"),
+                None => name.clone(),
+            },
+        )
+    }
+
     /// Finds the entry with source id `id`, preferring dictionary `prefer`.
     pub fn entry_by_id(&self, id: &str, prefer: Option<usize>) -> Option<(usize, u32)> {
         let preferred = prefer.into_iter();

@@ -148,15 +148,24 @@ impl AppView {
     }
 
     fn render_storage_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let library_dir = self.library.dir().to_owned();
-        let open = Button::new("open-library")
-            .outline()
-            .label("Open folder")
-            .on_click(move |_, _, cx| {
-                // It does not exist until the first import.
-                std::fs::create_dir_all(&library_dir).ok();
-                cx.open_with_system(&library_dir);
-            });
+        // Neither folder exists until something is first saved there.
+        let open_folder = |id: &'static str, dir: &std::path::Path| {
+            let dir = dir.to_owned();
+            Button::new(id)
+                .outline()
+                .label("Open folder")
+                .on_click(move |_, _, cx| {
+                    std::fs::create_dir_all(&dir).ok();
+                    cx.open_with_system(&dir);
+                })
+        };
+        let open_library = open_folder("open-library", self.library.dir());
+        let settings_dir = self
+            .settings
+            .path()
+            .parent()
+            .unwrap_or(self.settings.path());
+        let open_settings = open_folder("open-settings", settings_dir);
         GroupBox::new()
             .id("storage")
             .title("Storage")
@@ -165,14 +174,14 @@ impl AppView {
                 "library-folder",
                 Some("Library folder".into()),
                 self.library.dir().display().to_string(),
-                open,
+                open_library,
                 cx,
             ))
             .child(setting_row(
                 "settings-file",
                 Some("Settings file".into()),
                 self.settings.path().display().to_string(),
-                div(),
+                open_settings,
                 cx,
             ))
     }
