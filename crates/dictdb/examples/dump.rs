@@ -27,8 +27,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     for hit in &hits {
         println!(
-            "  {:<30} entry {:>7}  priority {}  anchor {:?}",
-            hit.title, hit.entry, hit.priority, hit.anchor
+            "  {:<30} entry {:>7} {:<20} priority {}  anchor {:?}",
+            hit.title,
+            hit.entry,
+            format!(
+                "{} {}",
+                hit.entry_title.as_deref().unwrap_or("-"),
+                hit.entry_detail.as_deref().unwrap_or("")
+            ),
+            hit.priority,
+            hit.anchor
         );
     }
     if let Some(hit) = hits.first() {

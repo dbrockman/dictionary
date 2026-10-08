@@ -22,13 +22,20 @@ fn imports_ddk_project() {
     );
 
     let d = Dictionary::open(&report.path).unwrap();
-    let titles: Vec<_> = d
+    // One hit per place in an entry, labelled with the entry it opens.
+    let hits: Vec<_> = d
         .search("ma", 10)
         .unwrap()
         .into_iter()
-        .map(|h| h.title)
+        .map(|h| (h.title, h.entry_title.unwrap_or_default()))
         .collect();
-    assert_eq!(titles, ["made", "make", "makes", "make it"]);
+    assert_eq!(
+        hits,
+        [
+            ("made".into(), "make".into()),
+            ("make it".into(), "make".into())
+        ]
+    );
 
     let make_it = &d.lookup("make it").unwrap()[0];
     assert_eq!(make_it.anchor.as_deref(), Some("make_it"));

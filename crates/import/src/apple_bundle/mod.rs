@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dictdb::{DictWriter, KeySpec};
+use dictdb::{DictWriter, EntrySpec, KeySpec};
 use plist::{Dictionary, Value};
 
 use crate::bundle_info::{dict_info, read_plist};
@@ -301,7 +301,13 @@ fn add_entry(writer: &mut DictWriter, xhtml: &str, keys: &[KeyRecord], job: &mut
         Ok(e) => e,
         Err(e) => return job.warn(format!("skipped malformed entry: {e}")),
     };
-    let entry_no = match writer.add_entry(&entry.id, &entry.html) {
+    let title = entry.display_title();
+    let entry_no = match writer.add_entry(EntrySpec {
+        id: &entry.id,
+        html: &entry.html,
+        title: &title,
+        detail: entry.part_of_speech.as_deref().unwrap_or_default(),
+    }) {
         Ok(n) => n,
         Err(e) => return job.warn(format!("could not store entry {:?}: {e}", entry.id)),
     };

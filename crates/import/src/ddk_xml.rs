@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use dictdb::{DictWriter, KeySpec};
+use dictdb::{DictWriter, EntrySpec, KeySpec};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 
@@ -72,7 +72,13 @@ fn add_entry(writer: &mut DictWriter, xhtml: &str, job: &mut Import<'_>) {
         Ok(entry) => entry,
         Err(e) => return job.warn(format!("skipped malformed entry: {e}")),
     };
-    let entry_no = match writer.add_entry(&entry.id, &entry.html) {
+    let title = entry.display_title();
+    let entry_no = match writer.add_entry(EntrySpec {
+        id: &entry.id,
+        html: &entry.html,
+        title: &title,
+        detail: entry.part_of_speech.as_deref().unwrap_or_default(),
+    }) {
         Ok(n) => n,
         Err(e) => return job.warn(format!("could not store entry {:?}: {e}", entry.id)),
     };

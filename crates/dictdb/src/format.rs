@@ -1,4 +1,4 @@
-//! On-disk layout of a `.dictdb` directory (format version 1).
+//! On-disk layout of a `.dictdb` directory (format version 2).
 //!
 //! All integers are little-endian.
 //!
@@ -12,13 +12,15 @@
 //! - `strings.bin`: deduplicated strings, each a `u32` length then UTF-8 bytes.
 //! - `ids.fst`: `fst::Map` from source entry id to entry number.
 //! - `entries.idx`: [`IDX_MAGIC`], `u32 entry_count`, `u32 block_count`, then
-//!   `entry_count` × `(block u32, offset u32, len u32)`, then `block_count` ×
-//!   `(file_offset u64, compressed_len u32)`.
+//!   `entry_count` × `(block u32, offset u32, len u32, title u32, detail u32)`,
+//!   then `block_count` × `(file_offset u64, compressed_len u32)`. `title` and
+//!   `detail` are offsets into `strings.bin` (or [`NO_STRING`]) that label the
+//!   entry in result lists.
 //! - `entries.bin`: zstd-compressed blocks of concatenated entry HTML.
 
 use serde::{Deserialize, Serialize};
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 pub const META_FILE: &str = "meta.json";
 pub const KEYS_FILE: &str = "keys.fst";
@@ -32,7 +34,7 @@ pub const RESOURCES_DIR: &str = "resources";
 
 pub const IDX_MAGIC: &[u8; 4] = b"DDBI";
 pub const IDX_HEADER_LEN: usize = 12;
-pub const IDX_ENTRY_LEN: usize = 12;
+pub const IDX_ENTRY_LEN: usize = 20;
 pub const IDX_BLOCK_LEN: usize = 12;
 
 pub const POSTING_LEN: usize = 14;

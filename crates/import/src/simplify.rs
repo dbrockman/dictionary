@@ -33,8 +33,29 @@ pub struct IndexKey {
 pub struct ParsedEntry {
     pub id: String,
     pub title: String,
+    /// The headword's homograph number, e.g. 2 for the second of several
+    /// entries titled "set".
+    pub homograph: Option<u32>,
+    /// The first part of speech in the entry, e.g. `verb`.
+    pub part_of_speech: Option<String>,
     pub html: String,
     pub indexes: Vec<IndexKey>,
+}
+
+impl ParsedEntry {
+    /// The title with its homograph number as a superscript, e.g. `set²`.
+    pub fn display_title(&self) -> String {
+        const SUPERSCRIPTS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
+        let mut title = self.title.trim().to_owned();
+        if let Some(n) = self.homograph.filter(|_| !title.is_empty()) {
+            title.extend(
+                n.to_string()
+                    .bytes()
+                    .map(|d| SUPERSCRIPTS[(d - b'0') as usize]),
+            );
+        }
+        title
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -179,6 +200,8 @@ pub fn parse_entry(xhtml: &str) -> Result<ParsedEntry, SimplifyError> {
     let mut skip_depth = 0usize;
     let mut has_heading = false;
     let mut seen_root = false;
+    // Text of the first element marked `d:pos`, and the stack depth it opened at.
+    let mut part_of_speech: Option<(usize, String)> = None;
 
     loop {
         let event = reader.read_event().map_err(|source| SimplifyError {
@@ -199,6 +222,16 @@ pub fn parse_entry(xhtml: &str) -> Result<ParsedEntry, SimplifyError> {
                 }
                 if name == "d:index" {
                     entry.indexes.push(index_key(e));
+                }
+                if !has_heading && entry.homograph.is_none() {
+                    entry.homograph = attr(e, "homograph").and_then(|n| n.trim().parse().ok());
+                }
+                if !is_empty
+                    && entry.part_of_speech.is_none()
+                    && part_of_speech.is_none()
+                    && attr(e, "d:pos").is_some()
+                {
+                    part_of_speech = Some((stack.len(), String::new()));
                 }
                 if skip_depth > 0 {
                     if !is_empty {
@@ -268,8 +301,21 @@ pub fn parse_entry(xhtml: &str) -> Result<ParsedEntry, SimplifyError> {
                         out.soft_space();
                     }
                 }
+                if let Some((_, text)) = part_of_speech.take_if(|(depth, _)| *depth >= stack.len())
+                {
+                    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                    entry.part_of_speech = Some(text).filter(|t| !t.is_empty());
+                }
             }
-            Event::Text(t) if skip_depth == 0 => out.text(&t.xml10_content()),
+            Event::Text(t) => {
+                let text = t.xml10_content();
+                if let Some((_, pos)) = &mut part_of_speech {
+                    pos.push_str(&text);
+                }
+                if skip_depth == 0 {
+                    out.text(&text);
+                }
+            }
             Event::CData(t) if skip_depth == 0 => out.text(&t.xml10_content()),
             Event::GeneralRef(r) if skip_depth == 0 => {
                 if let Ok(Some(c)) = r.resolve_char_ref() {
@@ -523,6 +569,26 @@ mod tests {
         assert_eq!(e.indexes[2].title, "make it");
         assert_eq!(e.indexes[2].anchor.as_deref(), Some("make_it"));
         assert!(e.indexes[2].parental);
+    }
+
+    #[test]
+    fn extracts_homograph_and_part_of_speech() {
+        let e = parse_entry(
+            r#"<d:entry id="set_2" d:title="set"><span class="hg"><span homograph="2" class="hw">set<span class="gp">2 </span></span></span><span class="posg"><span d:pos="1" class="pos"><span class="gp">noun </span><d:pos></d:pos></span></span><span class="se2"><span d:pos="1" class="pos">verb</span></span></d:entry>"#,
+        )
+        .unwrap();
+        assert_eq!(e.homograph, Some(2));
+        assert_eq!(e.part_of_speech.as_deref(), Some("noun"));
+        assert_eq!(e.display_title(), "set²");
+
+        let e = parse_entry(r#"<d:entry id="a" d:title="hus"><h1>hus</h1></d:entry>"#).unwrap();
+        assert_eq!((e.homograph, e.part_of_speech), (None, None));
+        let e = ParsedEntry {
+            title: "set".into(),
+            homograph: Some(12),
+            ..Default::default()
+        };
+        assert_eq!(e.display_title(), "set¹²");
     }
 
     #[test]

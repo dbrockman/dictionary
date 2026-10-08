@@ -1,4 +1,4 @@
-use dictdb::{DictInfo, DictWriter, Dictionary, KeySpec};
+use dictdb::{DictInfo, DictWriter, Dictionary, EntrySpec, KeySpec};
 
 fn info() -> DictInfo {
     DictInfo {
@@ -7,6 +7,14 @@ fn info() -> DictInfo {
         languages: vec!["en".into()],
         source_kind: "test".into(),
         copyright: None,
+    }
+}
+
+fn entry<'a>(id: &'a str, html: &'a str) -> EntrySpec<'a> {
+    EntrySpec {
+        id,
+        html,
+        ..Default::default()
     }
 }
 
@@ -24,10 +32,14 @@ fn write_then_read() {
 
     let mut w = DictWriter::create(&path, info()).unwrap();
     let make = w
-        .add_entry("make_1", "<h1>make</h1><p>to build</p>")
+        .add_entry(EntrySpec {
+            title: "make¹",
+            detail: "verb",
+            ..entry("make_1", "<h1>make</h1><p>to build</p>")
+        })
         .unwrap();
     let cafe = w
-        .add_entry("cafe_1", "<h1>café</h1><p>a coffee house</p>")
+        .add_entry(entry("cafe_1", "<h1>café</h1><p>a coffee house</p>"))
         .unwrap();
     w.add_key(make, key("make"));
     w.add_key(
@@ -63,16 +75,22 @@ fn write_then_read() {
         .into_iter()
         .map(|h| h.title)
         .collect();
-    assert_eq!(titles, ["made (make)", "make", "make it"]);
+    // "make" leads to the same place as "made", so it is not listed again.
+    assert_eq!(titles, ["made (make)", "make it"]);
 
-    let hits = d.search("make i", 10).unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].anchor.as_deref(), Some("make_it"));
-    assert!(hits[0].parental);
+    let hits = d.search("make", 10).unwrap();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(hits[0].title, "make");
+    assert_eq!(hits[0].entry_title.as_deref(), Some("make¹"));
+    assert_eq!(hits[0].entry_detail.as_deref(), Some("verb"));
+    assert_eq!(hits[1].anchor.as_deref(), Some("make_it"));
+    assert!(hits[1].parental);
 
     let hits = d.search("cafe", 10).unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].title, "Café");
+    assert_eq!(hits[0].entry_title, None);
+    assert_eq!(hits[0].entry_detail, None);
     assert_eq!(
         d.entry_html(hits[0].entry).unwrap(),
         "<h1>café</h1><p>a coffee house</p>"
@@ -98,7 +116,7 @@ fn many_entries_span_blocks() {
             "<h1>{word}</h1><p>{}</p>",
             "definition text ".repeat(i % 20)
         );
-        let e = w.add_entry(&word, &html).unwrap();
+        let e = w.add_entry(entry(&word, &html)).unwrap();
         w.add_key(e, key(&word));
     }
     w.finish().unwrap();
@@ -131,7 +149,7 @@ fn rewriting_replaces_previous_dictionary() {
     let path = tmp.path().join("d.dictdb");
     for word in ["first", "second"] {
         let mut w = DictWriter::create(&path, info()).unwrap();
-        let e = w.add_entry("", word).unwrap();
+        let e = w.add_entry(entry("", word)).unwrap();
         w.add_key(e, key(word));
         w.finish().unwrap();
     }
@@ -145,9 +163,9 @@ fn ranks_exact_matches_then_headwords_then_phrases() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("rank.dictdb");
     let mut w = DictWriter::create(&path, info()).unwrap();
-    let make = w.add_entry("make", "make").unwrap();
-    let maker = w.add_entry("maker", "maker").unwrap();
-    let making = w.add_entry("making", "making").unwrap();
+    let make = w.add_entry(entry("make", "make")).unwrap();
+    let maker = w.add_entry(entry("maker", "maker")).unwrap();
+    let making = w.add_entry(entry("making", "making")).unwrap();
     w.add_key(make, key("make"));
     for phrase in ["make a face", "make do", "make it"] {
         w.add_key(
@@ -162,7 +180,7 @@ fn ranks_exact_matches_then_headwords_then_phrases() {
     w.add_key(maker, key("maker"));
     w.add_key(making, key("making"));
     // A multi-word headword is still a headword.
-    let happy_hour = w.add_entry("happy_hour", "happy hour").unwrap();
+    let happy_hour = w.add_entry(entry("happy_hour", "happy hour")).unwrap();
     w.add_key(happy_hour, key("make hay"));
     w.finish().unwrap();
 
@@ -205,4 +223,36 @@ fn ranks_exact_matches_then_headwords_then_phrases() {
         titles("mak", 5),
         ["make", "make hay", "maker", "making", "make a face"]
     );
+}
+
+#[test]
+fn exact_matches_for_an_entry_title_come_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("titles.dictdb");
+    let mut w = DictWriter::create(&path, info()).unwrap();
+    // Added first, so without the tie-break it would be listed first.
+    let jet_set = w
+        .add_entry(EntrySpec {
+            title: "jet set",
+            ..entry("jet_set", "jet set")
+        })
+        .unwrap();
+    let set = w
+        .add_entry(EntrySpec {
+            title: "Set²",
+            ..entry("set_2", "set")
+        })
+        .unwrap();
+    w.add_key(jet_set, key("set"));
+    w.add_key(set, key("set"));
+    w.finish().unwrap();
+
+    let d = Dictionary::open(&path).unwrap();
+    let entries: Vec<_> = d
+        .search("set", 10)
+        .unwrap()
+        .into_iter()
+        .map(|h| h.entry)
+        .collect();
+    assert_eq!(entries, [set, jet_set]);
 }

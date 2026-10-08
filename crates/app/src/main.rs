@@ -113,6 +113,9 @@ fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>)
                     ..TitleBar::title_bar_options()
                 }),
                 window_bounds: Some(WindowBounds::centered(size(px(960.), px(640.)), cx)),
+                // Room for the narrowest result list and definition pane
+                // (32rem together) at the default 16px rem, plus chrome.
+                window_min_size: Some(size(px(640.), px(400.))),
                 app_id: Some("dictionary".into()),
                 ..Default::default()
             };

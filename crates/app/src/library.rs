@@ -20,6 +20,26 @@ pub struct Row {
     pub hit: Hit,
 }
 
+impl Row {
+    /// What the row opens: the entry's title, or for a phrase inside an
+    /// entry, the phrase.
+    pub fn label(&self) -> &str {
+        match (&self.hit.anchor, &self.hit.entry_title) {
+            (None, Some(title)) => title,
+            _ => &self.hit.title,
+        }
+    }
+
+    /// Muted text after the label that tells the row apart from others with
+    /// the same label: the part of speech, or for a phrase, its entry.
+    pub fn detail(&self) -> Option<&str> {
+        match self.hit.anchor {
+            None => self.hit.entry_detail.as_deref(),
+            Some(_) => self.hit.entry_title.as_deref(),
+        }
+    }
+}
+
 pub struct Library {
     dir: PathBuf,
     dicts: Vec<Dictionary>,
@@ -151,7 +171,8 @@ impl Library {
 
     /// Prefix search over one dictionary (`scope`) or all enabled ones: exact
     /// matches, then headwords, then phrases (see [`Hit::tier`]), each by key
-    /// and then by dictionary.
+    /// and then by dictionary. Exact matches for an entry's own title come
+    /// first (see [`Hit::names_entry`]).
     pub fn search(&self, query: &str, scope: Option<usize>) -> Vec<Row> {
         let mut rows = Vec::new();
         for (index, dict) in self.dicts.iter().enumerate() {
@@ -170,9 +191,8 @@ impl Library {
         if scope.is_none() && self.dicts.len() > 1 {
             let query = dictdb::normalize_key(query);
             // Stable, so equal keys keep dictionary order.
-            rows.sort_by(|a, b| {
-                (a.hit.tier(&query), &a.hit.key).cmp(&(b.hit.tier(&query), &b.hit.key))
-            });
+            let rank = |row: &Row| (row.hit.tier(&query), !row.hit.names_entry(&query));
+            rows.sort_by(|a, b| (rank(a), &a.hit.key).cmp(&(rank(b), &b.hit.key)));
             rows.truncate(RESULT_LIMIT);
         }
         rows
@@ -272,7 +292,12 @@ mod tests {
         };
         let mut w =
             dictdb::DictWriter::create(library.join(format!("{identifier}.dictdb")), info).unwrap();
-        let entry = w.add_entry("", word).unwrap();
+        let entry = w
+            .add_entry(dictdb::EntrySpec {
+                html: word,
+                ..Default::default()
+            })
+            .unwrap();
         w.add_key(
             entry,
             dictdb::KeySpec {

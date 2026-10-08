@@ -15,4 +15,4 @@ pub use error::{Error, Result};
 pub use format::{DictInfo, Meta};
 pub use normalize::normalize_key;
 pub use reader::{Dictionary, Hit};
-pub use writer::{DictWriter, KeySpec};
+pub use writer::{DictWriter, EntrySpec, KeySpec};

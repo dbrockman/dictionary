@@ -13,7 +13,7 @@ const ENTRIES: &[(&str, &str, &str)] = &[
     (
         "m_en_1",
         "make",
-        r#"<span class="hg x_xh0"><span class="hw">make</span> <span class="prx">| māk |</span></span><span class="sg"><span class="se1 x_xd0"><span class="pos">verb</span> <span class="msDict x_xd1"><span class="sn">1</span> <span class="df">form by putting parts together</span></span><span id="m_en_1.007" class="subEntry x_xo1"><span class="l">make it</span> succeed</span></span></span>"#,
+        r#"<span class="hg x_xh0"><span homograph="1" class="hw">make</span> <span class="prx">| māk |</span></span><span class="sg"><span class="se1 x_xd0"><span d:pos="1" class="pos">verb</span> <span class="msDict x_xd1"><span class="sn">1</span> <span class="df">form by putting parts together</span></span><span id="m_en_1.007" class="subEntry x_xo1"><span class="l">make it</span> succeed</span></span></span>"#,
     ),
     (
         "m_en_2",
@@ -257,13 +257,28 @@ fn check(layout: Layout) {
     assert_eq!(report.meta.entry_count, 3);
 
     let d = Dictionary::open(&report.path).unwrap();
-    let titles: Vec<_> = d
+    // One hit per place in an entry, labelled with the entry it opens.
+    let hits: Vec<_> = d
         .search("ma", 10)
         .unwrap()
         .into_iter()
-        .map(|h| h.title)
+        .map(|h| (h.title, h.entry_title, h.entry_detail))
         .collect();
-    assert_eq!(titles, ["made (make)", "make", "maker", "makes", "make it"]);
+    let label = |title: &str, entry: &str, detail: Option<&str>| {
+        (
+            title.to_owned(),
+            Some(entry.to_owned()),
+            detail.map(str::to_owned),
+        )
+    };
+    assert_eq!(
+        hits,
+        [
+            label("made (make)", "make¹", Some("verb")),
+            label("maker", "maker", None),
+            label("make it", "make¹", Some("verb")),
+        ]
+    );
 
     let make_it = &d.lookup("make it").unwrap()[0];
     assert_eq!(make_it.anchor.as_deref(), Some("m_en_1.007"));

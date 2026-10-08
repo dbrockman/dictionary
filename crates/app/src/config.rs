@@ -35,11 +35,14 @@ fn config_dir_from(var: impl Fn(&str) -> Option<OsString>) -> PathBuf {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     /// Identifiers of imported dictionaries left out of searches.
     pub disabled_dictionaries: BTreeSet<String>,
+    /// Width of the result list in rems, once the user has resized it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub results_width: Option<f32>,
 }
 
 /// [`Settings`] together with the file they are saved to.

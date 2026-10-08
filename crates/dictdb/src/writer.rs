@@ -7,6 +7,21 @@ use crate::error::{Error, Result};
 use crate::format::*;
 use crate::normalize::normalize_key;
 
+/// An entry to store.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EntrySpec<'a> {
+    /// Source id, used to resolve cross-reference links. May be empty.
+    pub id: &'a str,
+    /// Display HTML.
+    pub html: &'a str,
+    /// The entry's name in result lists, e.g. `set²`: the headword, then any
+    /// homograph number in superscript digits. Empty when unknown.
+    pub title: &'a str,
+    /// Short text that tells the entry apart from others with the same title,
+    /// e.g. its part of speech. Empty when unknown.
+    pub detail: &'a str,
+}
+
 /// A search key pointing at an entry.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KeySpec<'a> {
@@ -19,6 +34,15 @@ pub struct KeySpec<'a> {
     /// Lower values rank first among postings of the same key.
     pub priority: u8,
     pub parental: bool,
+}
+
+/// Where an entry's HTML is stored, and its label.
+struct EntryLoc {
+    block: u32,
+    offset: u32,
+    len: u32,
+    title: u32,
+    detail: u32,
 }
 
 struct PendingKey {
@@ -44,7 +68,7 @@ pub struct DictWriter {
     entries_pos: u64,
     block: Vec<u8>,
     blocks: Vec<(u64, u32)>,
-    entry_locs: Vec<(u32, u32, u32)>,
+    entry_locs: Vec<EntryLoc>,
     keys: Vec<PendingKey>,
     ids: Vec<(String, u32)>,
     strings: HashMap<String, u32>,
@@ -78,15 +102,23 @@ impl DictWriter {
         })
     }
 
-    /// Adds an entry's display HTML and returns its entry number.
-    pub fn add_entry(&mut self, id: &str, html: &str) -> Result<u32> {
+    /// Adds an entry and returns its entry number.
+    pub fn add_entry(&mut self, spec: EntrySpec<'_>) -> Result<u32> {
         let entry = u32::try_from(self.entry_locs.len()).map_err(|_| Error::TooLarge)?;
         let block = u32::try_from(self.blocks.len()).map_err(|_| Error::TooLarge)?;
-        let len = u32::try_from(html.len()).map_err(|_| Error::TooLarge)?;
-        self.entry_locs.push((block, self.block.len() as u32, len));
-        self.block.extend_from_slice(html.as_bytes());
-        if !id.is_empty() {
-            self.ids.push((id.to_owned(), entry));
+        let len = u32::try_from(spec.html.len()).map_err(|_| Error::TooLarge)?;
+        let title = self.intern_optional(spec.title);
+        let detail = self.intern_optional(spec.detail);
+        self.entry_locs.push(EntryLoc {
+            block,
+            offset: self.block.len() as u32,
+            len,
+            title,
+            detail,
+        });
+        self.block.extend_from_slice(spec.html.as_bytes());
+        if !spec.id.is_empty() {
+            self.ids.push((spec.id.to_owned(), entry));
         }
         if self.block.len() >= BLOCK_TARGET_LEN {
             self.flush_block()?;
@@ -106,10 +138,7 @@ impl DictWriter {
             key.title
         };
         let title = self.intern(title.trim());
-        let anchor = key
-            .anchor
-            .filter(|a| !a.is_empty())
-            .map_or(NO_STRING, |a| self.intern(a));
+        let anchor = self.intern_optional(key.anchor.unwrap_or_default());
         self.keys.push(PendingKey {
             key: normalized,
             entry,
@@ -165,6 +194,16 @@ impl DictWriter {
         Ok(meta)
     }
 
+    /// Like [`Self::intern`], but an empty string is stored as absent.
+    fn intern_optional(&mut self, s: &str) -> u32 {
+        let s = s.trim();
+        if s.is_empty() {
+            NO_STRING
+        } else {
+            self.intern(s)
+        }
+    }
+
     fn intern(&mut self, s: &str) -> u32 {
         if let Some(&offset) = self.strings.get(s) {
             return offset;
@@ -195,10 +234,10 @@ impl DictWriter {
         out.write_all(IDX_MAGIC)?;
         out.write_all(&(self.entry_locs.len() as u32).to_le_bytes())?;
         out.write_all(&(self.blocks.len() as u32).to_le_bytes())?;
-        for &(block, offset, len) in &self.entry_locs {
-            out.write_all(&block.to_le_bytes())?;
-            out.write_all(&offset.to_le_bytes())?;
-            out.write_all(&len.to_le_bytes())?;
+        for loc in &self.entry_locs {
+            for field in [loc.block, loc.offset, loc.len, loc.title, loc.detail] {
+                out.write_all(&field.to_le_bytes())?;
+            }
         }
         for &(offset, len) in &self.blocks {
             out.write_all(&offset.to_le_bytes())?;

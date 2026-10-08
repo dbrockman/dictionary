@@ -20,9 +20,14 @@ const BLOCK_CACHE_LEN: usize = 8;
 pub struct Hit {
     /// The normalized key that matched.
     pub key: String,
-    /// Text to show in the result list.
+    /// The key as written in the source, e.g. `made` or `make it`.
     pub title: String,
     pub entry: u32,
+    /// The entry's own title, e.g. `make¹`, when the importer recorded one.
+    pub entry_title: Option<String>,
+    /// Short text telling the entry apart from others with the same title,
+    /// e.g. its part of speech.
+    pub entry_detail: Option<String>,
     /// Element id inside the entry to scroll to.
     pub anchor: Option<String>,
     pub priority: u8,
@@ -42,6 +47,19 @@ impl Hit {
         } else {
             2
         }
+    }
+
+    /// Whether the entry's own title is `normalized_query`, ignoring a
+    /// homograph number written in superscript digits ([`EntrySpec::title`]).
+    /// Among exact matches for "set", this puts the entry "set¹" ahead of
+    /// "jet set", which "set" is also a key of.
+    ///
+    /// [`EntrySpec::title`]: crate::EntrySpec::title
+    pub fn names_entry(&self, normalized_query: &str) -> bool {
+        let is_superscript_digit = |c| matches!(c, '⁰' | '¹' | '²' | '³' | '⁴'..='⁹');
+        self.entry_title.as_deref().is_some_and(|t| {
+            normalize_key(t.trim_end_matches(is_superscript_digit)) == normalized_query
+        })
     }
 }
 
@@ -113,7 +131,10 @@ impl Dictionary {
 
     /// Returns up to `limit` hits whose key starts with the normalized `query`,
     /// ordered by [`Hit::tier`] (exact matches, then headwords, then phrases)
-    /// and then by key.
+    /// and then by key. Exact matches for an entry's own title (see
+    /// [`Hit::names_entry`]) come first. Each place in an entry (the entry
+    /// itself, or one of its anchors) is returned once, for the first key that
+    /// leads there.
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>> {
         let query = normalize_key(query);
         if query.is_empty() || limit == 0 {
@@ -136,7 +157,7 @@ impl Dictionary {
                     (false, true) => 1,
                     (false, false) => 2,
                 };
-                if tiers[tier].len() >= limit || !seen.insert((posting.entry, posting.title)) {
+                if tiers[tier].len() >= limit || !seen.insert((posting.entry, posting.anchor)) {
                     continue;
                 }
                 let hit = self.make_hit(&key, &posting)?;
@@ -148,6 +169,8 @@ impl Dictionary {
                 break;
             }
         }
+        // Stable, so ties keep posting order.
+        tiers[0].sort_by_key(|hit| !hit.names_entry(&query));
         let mut hits: Vec<Hit> = tiers.into_iter().flatten().collect();
         hits.truncate(limit);
         Ok(hits)
@@ -234,10 +257,16 @@ impl Dictionary {
     }
 
     fn make_hit(&self, key: &str, p: &RawPosting) -> Result<Hit> {
+        if p.entry >= self.meta.entry_count {
+            return Err(self.corrupt("posting points past the last entry"));
+        }
+        let at = IDX_HEADER_LEN + p.entry as usize * IDX_ENTRY_LEN;
         Ok(Hit {
             key: key.to_owned(),
             title: self.string(p.title)?.unwrap_or_default(),
             entry: p.entry,
+            entry_title: self.string(read_u32(&self.index, at + 12))?,
+            entry_detail: self.string(read_u32(&self.index, at + 16))?,
             anchor: self.string(p.anchor)?,
             priority: p.priority,
             parental: p.flags & FLAG_PARENTAL != 0,

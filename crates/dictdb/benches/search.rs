@@ -2,7 +2,7 @@ use std::hint::black_box;
 use std::path::Path;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use dictdb::{DictInfo, DictWriter, Dictionary, KeySpec};
+use dictdb::{DictInfo, DictWriter, Dictionary, EntrySpec, KeySpec};
 
 const ENTRIES: u32 = 100_000;
 const KEYS_PER_ENTRY: u32 = 3;
@@ -31,7 +31,14 @@ fn build(path: &Path) {
             "<h1>{head}</h1><p><i>noun</i></p><ol><li>The first sense of {head}, with an example.</li>\
              <li>A second, longer sense of {head} that goes on for a while to resemble real entries.</li></ol>"
         );
-        let e = w.add_entry(&format!("id{i}"), &html).unwrap();
+        let id = format!("id{i}");
+        let e = w
+            .add_entry(EntrySpec {
+                id: &id,
+                html: &html,
+                ..Default::default()
+            })
+            .unwrap();
         for k in 0..KEYS_PER_ENTRY {
             let keyword = format!("{head}{}", ["", "s", "ed"][k as usize]);
             w.add_key(

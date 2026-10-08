@@ -1,5 +1,6 @@
 //! The main window: search field, result list and definition pane.
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -8,6 +9,9 @@ use std::time::Duration;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Escape, Input, InputEvent, InputState, MoveDown, MoveUp, SelectAll,
+};
+use gpui_kit::component::resizable::{
+    ResizablePanelEvent, ResizableState, h_resizable, resizable_panel,
 };
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
@@ -37,6 +41,12 @@ actions!(
 
 const KEY_CONTEXT: &str = "Dictionary";
 const ROW_HEIGHT: f32 = 30.;
+/// Default width of the result list, in rems.
+const RESULTS_WIDTH: f32 = 18.;
+/// Widths the result list can be resized to, in rems.
+const RESULTS_WIDTH_RANGE: Range<f32> = 12.0..32.0;
+/// The narrowest the definition pane gets, in rems.
+const DEFINITION_MIN_WIDTH: f32 = 20.;
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -89,6 +99,8 @@ pub struct AppView {
     shown: Option<Shown>,
     history: History,
     list_scroll: UniformListScrollHandle,
+    /// Sizes of the result list and definition panes.
+    split: Entity<ResizableState>,
     /// Keeps app shortcuts working when focus is not in the search field.
     focus_handle: FocusHandle,
     status: Option<SharedString>,
@@ -109,7 +121,11 @@ impl AppView {
                 .placeholder("Search")
                 .clean_on_escape()
         });
-        let subscriptions = vec![cx.subscribe_in(&search, window, Self::on_search_event)];
+        let split = cx.new(|_| ResizableState::default());
+        let subscriptions = vec![
+            cx.subscribe_in(&search, window, Self::on_search_event),
+            cx.subscribe_in(&split, window, Self::on_split_resized),
+        ];
         search.update(cx, |state, cx| state.focus(window, cx));
 
         library.set_disabled(settings.settings.disabled_dictionaries.clone());
@@ -124,6 +140,7 @@ impl AppView {
             shown: None,
             history: History::default(),
             list_scroll: UniformListScrollHandle::new(),
+            split,
             focus_handle: cx.focus_handle(),
             status: None,
             import: None,
@@ -151,6 +168,22 @@ impl AppView {
             }
             _ => {}
         }
+    }
+
+    /// Remembers the result list width the user dragged it to.
+    fn on_split_resized(
+        &mut self,
+        split: &Entity<ResizableState>,
+        _: &ResizablePanelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(&width) = split.read(cx).sizes().first() else {
+            return;
+        };
+        let rems = (width / window.rem_size() * 10.).round() / 10.;
+        self.settings.settings.results_width = Some(rems);
+        self.save_settings();
     }
 
     fn query(&self, cx: &App) -> SharedString {
@@ -640,69 +673,103 @@ impl AppView {
         Some(row)
     }
 
+    /// The result list and definition pane, with a draggable divider between.
+    fn render_panes(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rem = window.rem_size();
+        let width = self
+            .settings
+            .settings
+            .results_width
+            .unwrap_or(RESULTS_WIDTH);
+        h_resizable("panes")
+            .with_state(&self.split)
+            .child(
+                resizable_panel()
+                    .size(rem * width)
+                    .size_range(rem * RESULTS_WIDTH_RANGE.start..rem * RESULTS_WIDTH_RANGE.end)
+                    .flex_none()
+                    .child(self.render_results(cx)),
+            )
+            .child(
+                resizable_panel()
+                    .size_range(rem * DEFINITION_MIN_WIDTH..Pixels::MAX)
+                    .child(self.render_definition(cx)),
+            )
+    }
+
     fn render_results(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let show_dict = self.scope.is_none() && self.enabled_dicts().len() > 1;
-        div()
-            .w(px(280.))
-            .h_full()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .child(
-                uniform_list(
-                    "results",
-                    self.rows.len(),
-                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                        let theme = cx.theme();
-                        range
-                            .map(|ix| {
-                                let row = &this.rows[ix];
-                                let selected = this.selected == Some(ix);
-                                h_flex()
-                                    .id(ix)
-                                    .w_full()
-                                    .h(px(ROW_HEIGHT))
-                                    .px_3()
-                                    .gap_2()
-                                    .justify_between()
-                                    .text_sm()
-                                    .when(selected, |el| {
-                                        el.bg(theme.list_active).text_color(theme.foreground)
-                                    })
-                                    .when(!selected, |el| el.hover(|el| el.bg(theme.list_hover)))
-                                    .child(
-                                        div()
-                                            .overflow_hidden()
-                                            .whitespace_nowrap()
-                                            .text_ellipsis()
-                                            .child(row.hit.title.clone()),
-                                    )
-                                    .when(show_dict, |el| {
-                                        el.child(
+        div().size_full().bg(theme.sidebar).child(
+            uniform_list(
+                "results",
+                self.rows.len(),
+                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                    let theme = cx.theme();
+                    range
+                        .map(|ix| {
+                            let row = &this.rows[ix];
+                            let selected = this.selected == Some(ix);
+                            let muted = |text: String| {
+                                div()
+                                    .flex_none()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(text)
+                            };
+                            let dict_name = show_dict
+                                .then(|| this.library.dicts()[row.dict].meta().name.clone());
+                            h_flex()
+                                .id(ix)
+                                .w_full()
+                                .h(px(ROW_HEIGHT))
+                                .px_3()
+                                .text_sm()
+                                .when(selected, |el| {
+                                    el.bg(theme.list_active).text_color(theme.foreground)
+                                })
+                                .when(!selected, |el| el.hover(|el| el.bg(theme.list_hover)))
+                                // Label, detail and dictionary name share one
+                                // baseline even though their sizes differ. The
+                                // dictionary name gives way before the label.
+                                .child(
+                                    h_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .items_baseline()
+                                        .gap_2()
+                                        .child(
                                             div()
-                                                .flex_none()
-                                                .text_xs()
-                                                .text_color(theme.muted_foreground)
-                                                .child(
-                                                    this.library.dicts()[row.dict]
-                                                        .meta()
-                                                        .name
-                                                        .clone(),
-                                                ),
+                                                .flex_shrink_0()
+                                                .max_w(relative(0.7))
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                                .child(row.label().to_owned()),
                                         )
-                                    })
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.select(ix, true, cx);
-                                        this.search.update(cx, |state, cx| state.focus(window, cx));
-                                    }))
-                            })
-                            .collect()
-                    }),
-                )
-                .size_full()
-                .track_scroll(&self.list_scroll),
+                                        .children(row.detail().map(|d| muted(d.to_owned())))
+                                        .children(dict_name.map(|name| {
+                                            muted(name)
+                                                .flex_shrink(1.)
+                                                .min_w_0()
+                                                .ml_auto()
+                                                .overflow_hidden()
+                                                .whitespace_nowrap()
+                                                .text_ellipsis()
+                                        })),
+                                )
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.select(ix, true, cx);
+                                    this.search.update(cx, |state, cx| state.focus(window, cx));
+                                }))
+                        })
+                        .collect()
+                }),
             )
+            .size_full()
+            .track_scroll(&self.list_scroll),
+        )
     }
 
     fn render_definition(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -769,7 +836,7 @@ impl AppView {
 }
 
 impl Render for AppView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
@@ -788,11 +855,10 @@ impl Render for AppView {
                     .child(self.render_toolbar(cx))
                     .children(self.render_scopes(cx))
                     .child(
-                        h_flex()
+                        div()
                             .flex_1()
                             .min_h_0()
-                            .child(self.render_results(cx))
-                            .child(self.render_definition(cx)),
+                            .child(self.render_panes(window, cx)),
                     ),
                 Mode::Settings => el
                     .child(self.render_settings_header(cx))
