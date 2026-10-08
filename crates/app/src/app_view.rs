@@ -13,6 +13,7 @@ use gpui_kit::component::input::{
 use gpui_kit::component::resizable::{
     ResizablePanelEvent, ResizableState, h_resizable, resizable_panel,
 };
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
@@ -743,76 +744,96 @@ impl AppView {
     fn render_results(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let show_dict = self.scope.is_none() && self.enabled_dicts().len() > 1;
-        div().size_full().bg(theme.sidebar).child(
-            uniform_list(
-                "results",
-                self.rows.len(),
-                cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
-                    let theme = cx.theme();
-                    range
-                        .map(|ix| {
-                            let row = &this.rows[ix];
-                            let selected = this.selected == Some(ix);
-                            let muted = |text: String| {
-                                div()
-                                    .flex_none()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(text)
-                            };
-                            let dict_name = show_dict
-                                .then(|| this.library.dicts()[row.dict].meta().name.clone());
-                            h_flex()
-                                .id(ix)
-                                .w_full()
-                                .h(px(ROW_HEIGHT))
-                                .px_3()
-                                .text_sm()
-                                .when(selected, |el| {
-                                    el.bg(theme.list_active).text_color(theme.foreground)
-                                })
-                                .when(!selected, |el| el.hover(|el| el.bg(theme.list_hover)))
-                                // Label, detail and dictionary name share one
-                                // baseline even though their sizes differ. The
-                                // dictionary name gives way before the label.
-                                .child(
-                                    h_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .items_baseline()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .flex_shrink_0()
-                                                .max_w(relative(0.7))
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_ellipsis()
-                                                .child(row.label().to_owned()),
-                                        )
-                                        .children(row.detail().map(|d| muted(d.to_owned())))
-                                        .children(dict_name.map(|name| {
-                                            muted(name)
-                                                .flex_shrink(1.)
-                                                .min_w_0()
-                                                .ml_auto()
-                                                .overflow_hidden()
-                                                .whitespace_nowrap()
-                                                .text_ellipsis()
-                                        })),
-                                )
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.select(ix, true, cx);
-                                    this.search.update(cx, |state, cx| state.focus(window, cx));
-                                }))
-                        })
-                        .collect()
-                }),
-            )
+        div()
             .size_full()
-            .track_scroll(&self.list_scroll),
-        )
+            .relative()
+            .bg(theme.sidebar)
+            .child(
+                uniform_list(
+                    "results",
+                    self.rows.len(),
+                    cx.processor(move |this, range: std::ops::Range<usize>, _window, cx| {
+                        let theme = cx.theme();
+                        range
+                            .map(|ix| {
+                                let row = &this.rows[ix];
+                                let selected = this.selected == Some(ix);
+                                let muted = |text: String| {
+                                    div()
+                                        .flex_none()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(text)
+                                };
+                                let dict_name = show_dict
+                                    .then(|| this.library.dicts()[row.dict].meta().name.clone());
+                                // Selected and hovered rows are inset, rounded surfaces like
+                                // sidebar menu items; the text stays on the 12px spine.
+                                let surface = h_flex()
+                                    // Without an id GPUI keeps no hover state for
+                                    // the element, so the hover style would only
+                                    // update on some later, unrelated redraw.
+                                    .id("surface")
+                                    .size_full()
+                                    .px_2()
+                                    .rounded(theme.radius)
+                                    .text_sm()
+                                    .when(selected, |el| {
+                                        el.bg(theme.sidebar_accent)
+                                            .text_color(theme.sidebar_accent_foreground)
+                                            .font_medium()
+                                    })
+                                    .when(!selected, |el| {
+                                        el.hover(|el| el.bg(theme.sidebar_accent.opacity(0.5)))
+                                    })
+                                    // Label, detail and dictionary name share one
+                                    // baseline even though their sizes differ. The
+                                    // dictionary name gives way before the label.
+                                    .child(
+                                        h_flex()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .items_baseline()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .flex_shrink_0()
+                                                    .max_w(relative(0.7))
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis()
+                                                    .child(row.label().to_owned()),
+                                            )
+                                            .children(row.detail().map(|d| muted(d.to_owned())))
+                                            .children(dict_name.map(|name| {
+                                                muted(name)
+                                                    .flex_shrink(1.)
+                                                    .min_w_0()
+                                                    .ml_auto()
+                                                    .overflow_hidden()
+                                                    .whitespace_nowrap()
+                                                    .text_ellipsis()
+                                            })),
+                                    );
+                                div()
+                                    .id(ix)
+                                    .w_full()
+                                    .h(px(ROW_HEIGHT))
+                                    .px_1()
+                                    .child(surface)
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.select(ix, true, cx);
+                                        this.search.update(cx, |state, cx| state.focus(window, cx));
+                                    }))
+                            })
+                            .collect()
+                    }),
+                )
+                .size_full()
+                .track_scroll(&self.list_scroll),
+            )
+            .vertical_scrollbar(&self.list_scroll)
     }
 
     fn render_definition(&mut self, cx: &mut Context<Self>) -> AnyElement {

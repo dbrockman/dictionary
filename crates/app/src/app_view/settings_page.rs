@@ -39,10 +39,20 @@ impl AppView {
 
     fn render_dictionaries_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        let mut group = GroupBox::new()
-            .id("dictionaries")
-            .title("Dictionaries")
-            .gap_4();
+        // The description says what the switches on each row do, the way
+        // GPUI Kit's `SettingGroup` shows a group description.
+        let title =
+            v_flex()
+                .gap_1()
+                .child("Dictionaries")
+                .when(!self.library.is_empty(), |title| {
+                    title.child(
+                        Label::new("Dictionaries that are switched off are left out of searches.")
+                            .text_sm()
+                            .text_color(muted),
+                    )
+                });
+        let mut group = GroupBox::new().id("dictionaries").title(title).gap_4();
         if self.library.is_empty() {
             group = group.child(
                 div()
