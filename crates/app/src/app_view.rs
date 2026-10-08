@@ -626,7 +626,7 @@ impl AppView {
                 Button::new("back")
                     .ghost()
                     .icon(IconName::ArrowLeft)
-                    .tooltip("Back")
+                    .tooltip_with_action("Back", &Back, Some(KEY_CONTEXT))
                     .disabled(!self.history.can_go_back())
                     .on_click(cx.listener(|this, _, window, cx| this.go_back(&Back, window, cx))),
             )
@@ -634,7 +634,7 @@ impl AppView {
                 Button::new("forward")
                     .ghost()
                     .icon(IconName::ArrowRight)
-                    .tooltip("Forward")
+                    .tooltip_with_action("Forward", &Forward, Some(KEY_CONTEXT))
                     .disabled(!self.history.can_go_forward())
                     .on_click(
                         cx.listener(|this, _, window, cx| this.go_forward(&Forward, window, cx)),
@@ -670,7 +670,7 @@ impl AppView {
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
-                    .tooltip("Settings")
+                    .tooltip_with_action("Settings", &ToggleSettings, Some(KEY_CONTEXT))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_settings(&ToggleSettings, window, cx)
                     })),
@@ -687,7 +687,7 @@ impl AppView {
                 Button::new("close-settings")
                     .ghost()
                     .icon(IconName::ArrowLeft)
-                    .tooltip("Back to Dictionary")
+                    .tooltip_with_action("Back to dictionary", &CloseSettings, Some(KEY_CONTEXT))
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.close_settings(&CloseSettings, window, cx)
                     })),
@@ -858,17 +858,60 @@ impl AppView {
             .vertical_scrollbar(&self.list_scroll)
     }
 
+    /// The definition pane when no entry is shown, with the next step.
+    fn render_empty_state(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let query = self.query(cx);
+        if self.library.is_empty() {
+            let add = Button::new("empty-add-dictionary")
+                .outline()
+                .label("Add dictionary…")
+                .on_click(cx.listener(|this, _, window, cx| this.add_dictionary(window, cx)));
+            pane_message(
+                IconName::BookOpen,
+                "No dictionaries yet".into(),
+                Some("Import a .dictionary bundle or a Dictionary Development Kit folder.".into()),
+                Some(add),
+                cx.theme(),
+            )
+        } else if query.is_empty() {
+            pane_message(
+                IconName::BookOpen,
+                "Type a word to look it up".into(),
+                None,
+                None,
+                cx.theme(),
+            )
+        } else if let Some(scope) = self.scope {
+            // The word may be in another dictionary; offer to look there.
+            let name = &self.library.dicts()[scope].meta().name;
+            let search_all = Button::new("search-all")
+                .outline()
+                .label("Search all dictionaries")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.select_scope(&SelectScope(0), window, cx)
+                }));
+            pane_message(
+                IconName::Search,
+                format!("No results for “{query}” in {name}").into(),
+                None,
+                Some(search_all),
+                cx.theme(),
+            )
+        } else {
+            pane_message(
+                IconName::Search,
+                format!("No results for “{query}”").into(),
+                None,
+                None,
+                cx.theme(),
+            )
+        }
+    }
+
     fn render_definition(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let Some(shown) = &self.shown else {
-            let message = if self.library.is_empty() {
-                "No dictionaries yet. Import a .dictionary bundle or Dictionary Development Kit XML in Settings (Ctrl+,)."
-            } else if self.query(cx).is_empty() {
-                "Type a word to look it up."
-            } else {
-                "No results."
-            };
-            return pane_message(IconName::BookOpen, message, None, theme).into_any_element();
+            return self.render_empty_state(cx).into_any_element();
         };
         let html = match &shown.html {
             Ok(html) => html.clone(),
@@ -876,8 +919,9 @@ impl AppView {
                 let detail = format!("{error}. Importing the dictionary again may fix it.");
                 return pane_message(
                     IconName::CircleX,
-                    "Couldn’t load this entry.",
+                    "Couldn’t load this entry.".into(),
                     Some(detail.into()),
+                    None,
                     theme,
                 )
                 .into_any_element();
@@ -911,10 +955,11 @@ impl AppView {
 /// A centered message in the definition pane: empty states and errors.
 fn pane_message(
     icon: IconName,
-    message: &'static str,
+    message: SharedString,
     detail: Option<SharedString>,
+    action: Option<Button>,
     theme: &gpui_kit::component::Theme,
-) -> impl IntoElement {
+) -> Div {
     v_flex()
         .flex_1()
         .size_full()
@@ -924,8 +969,9 @@ fn pane_message(
         .px_6()
         .text_color(theme.muted_foreground)
         .child(icon)
-        .child(message)
+        .child(div().max_w(rems(30.)).text_center().child(message))
         .children(detail.map(|detail| div().max_w(rems(30.)).text_sm().text_center().child(detail)))
+        .children(action)
 }
 
 impl Render for AppView {
