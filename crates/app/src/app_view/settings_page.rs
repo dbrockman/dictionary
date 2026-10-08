@@ -1,152 +1,201 @@
-//! The settings page, built with GPUI Kit's `Settings` component.
+//! The settings page: imported dictionaries and where their data is stored.
+//!
+//! There is a single page, so it is composed from `GroupBox`es directly.
+//! GPUI Kit's `Settings` component would add a navigation sidebar and search
+//! for that one page.
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant};
-use gpui_kit::component::setting::{
-    RenderOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
-};
+use gpui_kit::component::group_box::GroupBox;
+use gpui_kit::component::label::Label;
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::AppView;
 
+/// Line length that keeps a row's title and its controls easy to connect.
+const PAGE_MAX_WIDTH: f32 = 40.;
+
 impl AppView {
     pub(super) fn render_settings(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        Settings::new("settings").pages([self.dictionaries_page(cx.weak_entity())])
+        div()
+            .id("settings")
+            .size_full()
+            .child(
+                v_flex()
+                    .w_full()
+                    .max_w(rems(PAGE_MAX_WIDTH))
+                    .px_4()
+                    .py_6()
+                    .gap_6()
+                    .child(self.render_dictionaries_group(cx))
+                    .child(self.render_storage_group(cx)),
+            )
+            .overflow_y_scrollbar()
     }
 
-    fn dictionaries_page(&self, view: WeakEntity<Self>) -> SettingPage {
-        let mut imported = SettingGroup::new().title("Imported Dictionaries");
+    fn render_dictionaries_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        let mut group = GroupBox::new()
+            .id("dictionaries")
+            .title("Dictionaries")
+            .gap_4();
         if self.library.is_empty() {
-            imported = imported.item(SettingItem::render(|_, _, cx| {
+            group = group.child(
                 div()
                     .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("No dictionaries imported yet.")
-            }));
+                    .text_color(muted)
+                    .child("No dictionaries imported yet."),
+            );
         }
         for (ix, dict) in self.library.dicts().iter().enumerate() {
             let meta = dict.meta();
-            let row = DictionaryRow {
-                view: view.clone(),
-                ix,
-                identifier: meta.identifier.clone().into(),
-                name: meta.name.clone().into(),
-                enabled: self.library.is_enabled(ix),
-            };
             let description = format!(
                 "{} entries · {} on disk",
                 format_count(meta.entry_count),
                 format_size(self.library.size_on_disk(ix))
             );
-            imported = imported.item(
-                SettingItem::new(
-                    row.name.clone(),
-                    SettingField::render(move |options, _, _| row.render_actions(options)),
-                )
-                .description(SharedString::from(description)),
+            let controls = self.render_dictionary_controls(
+                meta.identifier.clone().into(),
+                meta.name.clone().into(),
+                self.library.is_enabled(ix),
+                cx,
             );
+            group = group.child(setting_row(
+                SharedString::from(format!("dictionary-{}", meta.identifier)),
+                Some(meta.name.clone().into()),
+                description,
+                controls,
+                cx,
+            ));
         }
 
         let importing = self.import.as_ref().map(|job| job.progress());
-        let add = SettingItem::new(
-            "Add a Dictionary",
-            SettingField::render({
-                let view = view.clone();
-                move |options, _, _| {
-                    let view = view.clone();
-                    Button::new("add-dictionary")
-                        .outline()
-                        .label("Add…")
-                        .loading(importing.is_some())
-                        .with_size(options.size())
-                        .on_click(move |_, _, cx| {
-                            view.update(cx, |this, cx| this.add_dictionary(cx)).ok();
-                        })
-                }
-            }),
-        )
-        .description(SharedString::from(match importing {
+        let description = match importing {
             Some(progress) => format!("Importing… {:.0}%", progress * 100.),
             None => "Import a .dictionary bundle or a Dictionary Development Kit folder.".into(),
-        }));
-        imported = imported.item(add);
-
-        let library_dir = self.library.dir().to_owned();
-        let storage = SettingGroup::new().title("Storage").items([
-            SettingItem::new(
-                "Library Folder",
-                SettingField::render(move |options, _, _| {
-                    let dir = library_dir.clone();
-                    Button::new("open-library")
-                        .outline()
-                        .label("Open Folder")
-                        .with_size(options.size())
-                        .on_click(move |_, _, cx| {
-                            // It does not exist until the first import.
-                            std::fs::create_dir_all(&dir).ok();
-                            cx.open_with_system(&dir);
-                        })
-                }),
-            )
-            .description(SharedString::from(self.library.dir().display().to_string())),
-            SettingItem::new("Settings File", SettingField::render(|_, _, _| div())).description(
-                SharedString::from(self.settings.path().display().to_string()),
-            ),
-        ]);
-
-        SettingPage::new("Dictionaries")
-            .icon(IconName::BookOpen)
-            .groups([imported, storage])
+        };
+        let add = Button::new("add-dictionary")
+            .outline()
+            .label("Add dictionary…")
+            .loading(importing.is_some())
+            .on_click(cx.listener(|this, _, _, cx| this.add_dictionary(cx)));
+        group.child(setting_row(
+            "add-dictionary-row",
+            None,
+            description,
+            add,
+            cx,
+        ))
     }
-}
 
-/// What a dictionary's row in the list needs to render and act.
-struct DictionaryRow {
-    view: WeakEntity<AppView>,
-    ix: usize,
-    identifier: SharedString,
-    name: SharedString,
-    enabled: bool,
-}
-
-impl DictionaryRow {
-    fn render_actions(&self, options: &RenderOptions) -> impl IntoElement + use<> {
-        let toggle = {
-            let view = self.view.clone();
-            let identifier = self.identifier.clone();
-            move |enabled: &bool, window: &mut Window, cx: &mut App| {
-                view.update(cx, |this, cx| {
-                    this.set_dictionary_enabled(&identifier, *enabled, window, cx)
-                })
-                .ok();
+    fn render_dictionary_controls(
+        &self,
+        identifier: SharedString,
+        name: SharedString,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let toggle = cx.listener({
+            let identifier = identifier.clone();
+            move |this, enabled: &bool, window, cx| {
+                this.set_dictionary_enabled(&identifier, *enabled, window, cx)
             }
-        };
-        let delete = {
-            let view = self.view.clone();
-            let identifier = self.identifier.clone();
-            let name = self.name.clone();
-            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
-                confirm_delete(view.clone(), identifier.clone(), name.clone(), window, cx)
+        });
+        let delete = cx.listener({
+            let identifier = identifier.clone();
+            move |this, _: &ClickEvent, window, cx| {
+                // The dialog gives focus back to whatever had it when it
+                // opened. Make that the view rather than the Delete button,
+                // which is gone by then.
+                window.focus(&this.focus_handle, cx);
+                confirm_delete(
+                    cx.weak_entity(),
+                    identifier.clone(),
+                    name.clone(),
+                    window,
+                    cx,
+                )
             }
-        };
+        });
         h_flex()
             .gap_3()
             .child(
-                Switch::new(("dictionary-enabled", self.ix))
-                    .checked(self.enabled)
+                Switch::new(SharedString::from(format!("enabled-{identifier}")))
+                    .checked(enabled)
                     .tooltip("Include in searches")
                     .on_click(toggle),
             )
             .child(
-                Button::new(("dictionary-delete", self.ix))
+                Button::new(SharedString::from(format!("delete-{identifier}")))
                     .outline()
                     .label("Delete")
-                    .with_size(options.size())
                     .on_click(delete),
             )
     }
+
+    fn render_storage_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let library_dir = self.library.dir().to_owned();
+        let open = Button::new("open-library")
+            .outline()
+            .label("Open folder")
+            .on_click(move |_, _, cx| {
+                // It does not exist until the first import.
+                std::fs::create_dir_all(&library_dir).ok();
+                cx.open_with_system(&library_dir);
+            });
+        GroupBox::new()
+            .id("storage")
+            .title("Storage")
+            .gap_4()
+            .child(setting_row(
+                "library-folder",
+                Some("Library folder".into()),
+                self.library.dir().display().to_string(),
+                open,
+                cx,
+            ))
+            .child(setting_row(
+                "settings-file",
+                Some("Settings file".into()),
+                self.settings.path().display().to_string(),
+                div(),
+                cx,
+            ))
+    }
+}
+
+/// A row laid out like GPUI Kit's `SettingItem`: a title and a muted
+/// description on the leading side, the controls on the trailing side.
+fn setting_row(
+    id: impl Into<ElementId>,
+    title: Option<SharedString>,
+    description: impl Into<SharedString>,
+    controls: impl IntoElement,
+    cx: &App,
+) -> impl IntoElement {
+    h_flex()
+        .id(id)
+        .w_full()
+        .justify_between()
+        .items_center()
+        .gap_3()
+        .child(
+            v_flex()
+                .flex_1()
+                .max_w_3_5()
+                .when_some(title, |el, title| el.child(Label::new(title).text_sm()))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(description.into()),
+                ),
+        )
+        .child(controls)
 }
 
 fn confirm_delete(
@@ -156,12 +205,6 @@ fn confirm_delete(
     window: &mut Window,
     cx: &mut App,
 ) {
-    // The dialog gives focus back to whatever had it when it opened. Make
-    // that the view rather than the Delete button, which is gone by then.
-    if let Some(view) = view.upgrade() {
-        let focus = view.read(cx).focus_handle.clone();
-        window.focus(&focus, cx);
-    }
     window.open_alert_dialog(cx, move |alert, _, _| {
         let view = view.clone();
         let identifier = identifier.clone();

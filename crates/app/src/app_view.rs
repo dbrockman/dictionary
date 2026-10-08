@@ -13,13 +13,15 @@ use gpui_kit::component::input::{
 use gpui_kit::component::resizable::{
     ResizablePanelEvent, ResizableState, h_resizable, resizable_panel,
 };
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, StyledExt as _,
-    TitleBar, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, TitleBar, h_flex,
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use serde::Deserialize;
 
 use crate::config::SettingsStore;
 use crate::history::{History, Page};
@@ -35,9 +37,17 @@ actions!(
         Forward,
         ToggleSettings,
         CloseSettings,
+        NextScope,
+        PreviousScope,
         Quit
     ]
 );
+
+/// Selects the scope tab at this position: 0 searches all dictionaries, 1 and
+/// up only the first, second, … enabled one.
+#[derive(Action, Clone, PartialEq, Eq, Deserialize)]
+#[action(namespace = dictionary, no_json)]
+pub struct SelectScope(pub usize);
 
 const KEY_CONTEXT: &str = "Dictionary";
 const ROW_HEIGHT: f32 = 30.;
@@ -47,6 +57,8 @@ const RESULTS_WIDTH: f32 = 18.;
 const RESULTS_WIDTH_RANGE: Range<f32> = 12.0..32.0;
 /// The narrowest the definition pane gets, in rems.
 const DEFINITION_MIN_WIDTH: f32 = 20.;
+/// Longer dictionary names are truncated in the scope tabs, in rems.
+const SCOPE_TAB_MAX_WIDTH: f32 = 14.;
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -58,8 +70,18 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-]", Forward, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-,", ToggleSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CloseSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-tab", NextScope, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-shift-tab", PreviousScope, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
+    // Secondary-1 is "All", like the first tab in a browser.
+    cx.bind_keys((1..=9).map(|n| {
+        KeyBinding::new(
+            &format!("secondary-{n}"),
+            SelectScope(n - 1),
+            Some(KEY_CONTEXT),
+        )
+    }));
 }
 
 /// The entry currently shown in the definition pane.
@@ -99,6 +121,7 @@ pub struct AppView {
     shown: Option<Shown>,
     history: History,
     list_scroll: UniformListScrollHandle,
+    scope_scroll: ScrollHandle,
     /// Sizes of the result list and definition panes.
     split: Entity<ResizableState>,
     /// Keeps app shortcuts working when focus is not in the search field.
@@ -140,6 +163,7 @@ impl AppView {
             shown: None,
             history: History::default(),
             list_scroll: UniformListScrollHandle::new(),
+            scope_scroll: ScrollHandle::new(),
             split,
             focus_handle: cx.focus_handle(),
             status: None,
@@ -373,9 +397,36 @@ impl AppView {
         cx.stop_propagation();
     }
 
-    fn set_scope(&mut self, scope: Option<usize>, _: &mut Window, cx: &mut Context<Self>) {
-        self.scope = scope;
+    /// The scope tab that is selected: 0 for "All", then one per dictionary
+    /// in [`Self::enabled_dicts`].
+    fn scope_tab(&self, enabled: &[usize]) -> usize {
+        self.scope
+            .and_then(|scope| enabled.iter().position(|&ix| ix == scope))
+            .map_or(0, |position| position + 1)
+    }
+
+    fn select_scope(&mut self, action: &SelectScope, _: &mut Window, cx: &mut Context<Self>) {
+        let enabled = self.enabled_dicts();
+        if self.mode != Mode::Dictionary || enabled.len() < 2 || action.0 > enabled.len() {
+            return;
+        }
+        let tab = action.0;
+        self.scope = tab.checked_sub(1).map(|position| enabled[position]);
+        self.scope_scroll.scroll_to_item(tab);
         self.run_search(cx);
+    }
+
+    fn next_scope(&mut self, _: &NextScope, window: &mut Window, cx: &mut Context<Self>) {
+        let enabled = self.enabled_dicts();
+        let tab = (self.scope_tab(&enabled) + 1) % (enabled.len() + 1);
+        self.select_scope(&SelectScope(tab), window, cx);
+    }
+
+    fn previous_scope(&mut self, _: &PreviousScope, window: &mut Window, cx: &mut Context<Self>) {
+        let enabled = self.enabled_dicts();
+        let tabs = enabled.len() + 1;
+        let tab = (self.scope_tab(&enabled) + tabs - 1) % tabs;
+        self.select_scope(&SelectScope(tab), window, cx);
     }
 
     /// Asks for dictionaries to import, then imports them in the background.
@@ -637,40 +688,32 @@ impl AppView {
             .collect()
     }
 
-    fn render_scopes(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    /// Tabs that restrict the search to one dictionary. Tabs that do not fit
+    /// scroll, and the overflow menu lists them all.
+    fn render_scopes(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<TabBar> {
         let enabled = self.enabled_dicts();
         if enabled.len() < 2 {
             return None;
         }
-        let mut row = h_flex()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                Button::new("scope-all")
-                    .small()
-                    .ghost()
-                    .label("All")
-                    .selected(self.scope.is_none())
-                    .on_click(cx.listener(|this, _, window, cx| this.set_scope(None, window, cx))),
-            );
-        for ix in enabled {
-            let dict = &self.library.dicts()[ix];
-            row =
-                row.child(
-                    Button::new(("scope", ix))
-                        .small()
-                        .ghost()
-                        .label(dict.meta().name.clone())
-                        .selected(self.scope == Some(ix))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.set_scope(Some(ix), window, cx)
-                        })),
-                );
-        }
-        Some(row)
+        let names = enabled
+            .iter()
+            .map(|&ix| self.library.dicts()[ix].meta().name.clone());
+        Some(
+            TabBar::new("scopes")
+                .underline()
+                .small()
+                // Labels start on the same edge as the result rows.
+                .px_3()
+                .menu(true)
+                .max_width(window.rem_size() * SCOPE_TAB_MAX_WIDTH)
+                .track_scroll(&self.scope_scroll)
+                .selected_index(self.scope_tab(&enabled))
+                .child(Tab::new().label("All"))
+                .children(names.map(|name| Tab::new().label(name)))
+                .on_click(cx.listener(|this, tab: &usize, window, cx| {
+                    this.select_scope(&SelectScope(*tab), window, cx)
+                })),
+        )
     }
 
     /// The result list and definition pane, with a draggable divider between.
@@ -845,6 +888,9 @@ impl Render for AppView {
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::toggle_settings))
             .on_action(cx.listener(Self::close_settings))
+            .on_action(cx.listener(Self::select_scope))
+            .on_action(cx.listener(Self::next_scope))
+            .on_action(cx.listener(Self::previous_scope))
             .on_key_down(cx.listener(Self::type_to_search))
             .size_full()
             .bg(cx.theme().background)
@@ -853,7 +899,7 @@ impl Render for AppView {
             .map(|el| match self.mode {
                 Mode::Dictionary => el
                     .child(self.render_toolbar(cx))
-                    .children(self.render_scopes(cx))
+                    .children(self.render_scopes(window, cx))
                     .child(
                         div()
                             .flex_1()
