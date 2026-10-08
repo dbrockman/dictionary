@@ -50,3 +50,7 @@ The workspace has three crates, forming a one-way pipeline: **import → dictdb 
 - `data/` holds real Apple dictionary bundles copied from a Mac. It is licensed content and **git-ignored; never commit it.** `tests/apple_bundle.rs::real_bundles_in_data` imports everything in it when present.
 - The other Apple-format tests build synthetic bundles with a test-side writer, and DDK tests use `crates/import/tests/fixtures/ddk`, so CI needs no Apple content.
 - To look at the GUI without touching the user's desktop, run the release binary under `Xvfb` with `WAYLAND_DISPLAY` unset and `DISPLAY` pointing at it. Set `XDG_CONFIG_HOME` and `--library` to scratch directories so tests do not touch the real settings or library. Drive it with `xdotool` and capture with ImageMagick `import` (all available via `nix shell nixpkgs#xorg-server nixpkgs#xdotool nixpkgs#imagemagick`).
+
+## GPUI Kit skills
+
+`.claude/skills/gpui-kit` and `.claude/skills/gpui-kit-design-guides` are copied unmodified from the GPUI Kit repository at tag `v0.7.1` (commit `87d10ae`), matching the `gpui-kit = "0.7.1"` dependency. They are Apache-2.0 licensed (`.claude/skills/LICENSE-gpui-kit-APACHE`). When upgrading `gpui-kit`, replace them with the `skills/` directory from the matching release tag of https://github.com/longbridge/gpui-kit.
