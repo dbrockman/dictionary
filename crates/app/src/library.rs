@@ -1,7 +1,7 @@
 //! The set of imported dictionaries and searching across them.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
@@ -23,6 +23,10 @@ pub struct Row {
 pub struct Library {
     dir: PathBuf,
     dicts: Vec<Dictionary>,
+    /// Size on disk of each dictionary, parallel to `dicts`.
+    sizes: Vec<u64>,
+    /// Identifiers of dictionaries left out of searches across all dictionaries.
+    disabled: BTreeSet<String>,
     /// Images inlined as `data:` URLs, by file path.
     images: RefCell<HashMap<PathBuf, Option<Rc<str>>>>,
 }
@@ -78,10 +82,13 @@ impl Library {
                 .to_lowercase()
                 .cmp(&b.meta().name.to_lowercase())
         });
+        let sizes = dicts.iter().map(|d| dir_size(d.path())).collect();
         (
             Self {
                 dir: dir.to_owned(),
                 dicts,
+                sizes,
+                disabled: BTreeSet::new(),
                 images: RefCell::default(),
             },
             errors,
@@ -89,7 +96,8 @@ impl Library {
     }
 
     pub fn reload(&mut self) -> Vec<String> {
-        let (fresh, errors) = Self::open(&self.dir);
+        let (mut fresh, errors) = Self::open(&self.dir);
+        fresh.disabled = std::mem::take(&mut self.disabled);
         *self = fresh;
         errors
     }
@@ -106,13 +114,52 @@ impl Library {
         self.dicts.is_empty()
     }
 
-    /// Prefix search over one dictionary (`scope`) or all of them: exact
+    /// Total size of the dictionary's files in bytes.
+    pub fn size_on_disk(&self, dict: usize) -> u64 {
+        self.sizes.get(dict).copied().unwrap_or(0)
+    }
+
+    pub fn position(&self, identifier: &str) -> Option<usize> {
+        self.dicts
+            .iter()
+            .position(|d| d.meta().identifier == identifier)
+    }
+
+    pub fn is_enabled(&self, dict: usize) -> bool {
+        self.dicts
+            .get(dict)
+            .is_some_and(|d| !self.disabled.contains(&d.meta().identifier))
+    }
+
+    /// Sets which dictionaries (by identifier) are left out of searches.
+    pub fn set_disabled(&mut self, disabled: BTreeSet<String>) {
+        self.disabled = disabled;
+    }
+
+    /// Removes a dictionary from the library and deletes its files.
+    pub fn delete(&mut self, dict: usize) -> std::io::Result<()> {
+        if dict >= self.dicts.len() {
+            return Ok(());
+        }
+        let removed = self.dicts.remove(dict);
+        self.sizes.remove(dict);
+        let path = removed.path().to_owned();
+        // Unmap the files first; Windows cannot delete mapped files.
+        drop(removed);
+        std::fs::remove_dir_all(path)
+    }
+
+    /// Prefix search over one dictionary (`scope`) or all enabled ones: exact
     /// matches, then headwords, then phrases (see [`Hit::tier`]), each by key
     /// and then by dictionary.
     pub fn search(&self, query: &str, scope: Option<usize>) -> Vec<Row> {
         let mut rows = Vec::new();
         for (index, dict) in self.dicts.iter().enumerate() {
-            if scope.is_some_and(|s| s != index) {
+            let included = match scope {
+                Some(s) => s == index,
+                None => !self.disabled.contains(&dict.meta().identifier),
+            };
+            if !included {
                 continue;
             }
             match dict.search(query, RESULT_LIMIT) {
@@ -200,9 +247,78 @@ impl Library {
     }
 }
 
+fn dir_size(path: &Path) -> u64 {
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(m) if m.is_dir() => dir_size(&entry.path()),
+            Ok(m) => m.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_dict(library: &Path, identifier: &str, word: &str) {
+        let info = dictdb::DictInfo {
+            name: identifier.to_uppercase(),
+            identifier: identifier.into(),
+            ..Default::default()
+        };
+        let mut w =
+            dictdb::DictWriter::create(library.join(format!("{identifier}.dictdb")), info).unwrap();
+        let entry = w.add_entry("", word).unwrap();
+        w.add_key(
+            entry,
+            dictdb::KeySpec {
+                keyword: word,
+                ..Default::default()
+            },
+        );
+        w.finish().unwrap();
+    }
+
+    #[test]
+    fn disabled_dictionaries_are_only_searched_when_scoped() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_dict(tmp.path(), "a", "apple");
+        write_dict(tmp.path(), "b", "apricot");
+        let (mut library, errors) = Library::open(tmp.path());
+        assert!(errors.is_empty());
+        assert!(library.size_on_disk(0) > 0);
+        assert_eq!(library.search("ap", None).len(), 2);
+
+        library.set_disabled(["b".to_owned()].into());
+        assert!(library.is_enabled(0) && !library.is_enabled(1));
+        let rows = library.search("ap", None);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].hit.title, "apple");
+        assert_eq!(library.search("ap", Some(1)).len(), 1);
+
+        // Reloading keeps the disabled set.
+        library.reload();
+        assert!(!library.is_enabled(1));
+    }
+
+    #[test]
+    fn deletes_dictionary_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_dict(tmp.path(), "a", "apple");
+        write_dict(tmp.path(), "b", "banana");
+        let (mut library, _) = Library::open(tmp.path());
+        let b = library.position("b").unwrap();
+        library.delete(b).unwrap();
+        assert!(!tmp.path().join("b.dictdb").exists());
+        assert_eq!(library.dicts().len(), 1);
+        assert_eq!(library.position("b"), None);
+        assert!(library.search("banana", None).is_empty());
+        assert_eq!(library.search("apple", None).len(), 1);
+    }
 
     #[test]
     fn inlines_resource_images_only_from_the_resources_dir() {

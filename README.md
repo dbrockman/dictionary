@@ -43,6 +43,11 @@ Imported dictionaries are stored in `~/.local/share/dictionary/` (Linux),
 `~/Library/Application Support/Dictionary/` (macOS) or `%APPDATA%\Dictionary`
 (Windows). Override this with `--library DIR` or `DICTIONARY_LIBRARY`.
 
+Settings are saved in `settings.json` under `$XDG_CONFIG_HOME/dictionary/` when
+`XDG_CONFIG_HOME` is set (on any platform), otherwise `~/.config/dictionary/`
+(Linux), `~/Library/Application Support/Dictionary/` (macOS) or
+`%APPDATA%\Dictionary` (Windows).
+
 ## Using
 
 | Key | Action |
@@ -53,6 +58,7 @@ Imported dictionaries are stored in `~/.local/share/dictionary/` (Linux),
 | Ctrl+L / Ctrl+F | focus the search field |
 | Alt+← / Alt+→ (Ctrl+[ / Ctrl+]) | back / forward |
 | Ctrl+O | import a dictionary |
+| Ctrl+, | settings: enable, disable, add and delete dictionaries |
 | Ctrl+Q | quit |
 
 `dictionary WORD` opens the app showing WORD. `--timings` prints startup timings.

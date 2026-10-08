@@ -4,6 +4,7 @@
 //! `dictionary import <PATH>...` imports dictionaries without a GUI.
 
 mod app_view;
+mod config;
 mod history;
 mod library;
 
@@ -90,7 +91,8 @@ fn import_cli(paths: &[PathBuf], library_dir: &std::path::Path) -> anyhow::Resul
 
 fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>) {
     let (library, errors) = Library::open(&library_dir);
-    for error in errors {
+    let (settings, settings_error) = config::SettingsStore::load(&config::config_dir());
+    for error in errors.into_iter().chain(settings_error) {
         eprintln!("{error}");
     }
     if let Some(t) = started {
@@ -120,7 +122,7 @@ fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>)
                 if let Some(t) = started {
                     window.on_next_frame(move |_, _| eprintln!("first frame: {:?}", t.elapsed()));
                 }
-                cx.new(|cx| AppView::new(library, word, window, cx))
+                cx.new(|cx| AppView::new(library, settings, word, window, cx))
             })
             .expect("failed to open window");
             cx.activate(true);

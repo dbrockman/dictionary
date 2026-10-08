@@ -11,18 +11,29 @@ use gpui_kit::component::input::{
 };
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, TitleBar, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Sizable as _, StyledExt as _,
+    TitleBar, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::config::SettingsStore;
 use crate::history::{History, Page};
 use crate::library::{Library, Row};
 
+mod settings_page;
+
 actions!(
     dictionary,
-    [FocusSearch, Back, Forward, AddDictionary, Quit]
+    [
+        FocusSearch,
+        Back,
+        Forward,
+        AddDictionary,
+        ToggleSettings,
+        CloseSettings,
+        Quit
+    ]
 );
 
 const KEY_CONTEXT: &str = "Dictionary";
@@ -37,6 +48,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-[", Back, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-]", Forward, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-o", AddDictionary, Some(KEY_CONTEXT)),
+        KeyBinding::new("secondary-,", ToggleSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new("escape", CloseSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
     ]);
 }
@@ -53,8 +66,23 @@ struct ImportJob {
     label: SharedString,
 }
 
+impl ImportJob {
+    /// Fraction done, in 0..=1.
+    fn progress(&self) -> f32 {
+        f32::from_bits(self.progress.load(Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Dictionary,
+    Settings,
+}
+
 pub struct AppView {
+    mode: Mode,
     library: Library,
+    settings: SettingsStore,
     search: Entity<InputState>,
     rows: Vec<Row>,
     selected: Option<usize>,
@@ -72,7 +100,8 @@ pub struct AppView {
 
 impl AppView {
     pub fn new(
-        library: Library,
+        mut library: Library,
+        settings: SettingsStore,
         initial_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -85,8 +114,11 @@ impl AppView {
         let subscriptions = vec![cx.subscribe_in(&search, window, Self::on_search_event)];
         search.update(cx, |state, cx| state.focus(window, cx));
 
+        library.set_disabled(settings.settings.disabled_dictionaries.clone());
         let mut this = Self {
+            mode: Mode::Dictionary,
             library,
+            settings,
             search,
             rows: Vec::new(),
             selected: None,
@@ -109,11 +141,11 @@ impl AppView {
         &mut self,
         _: &Entity<InputState>,
         event: &InputEvent,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
-            InputEvent::Change => self.run_search(window, cx),
+            InputEvent::Change => self.run_search(cx),
             InputEvent::PressEnter { .. } => {
                 if let Some(ix) = self.selected {
                     self.open_row(ix, true, cx);
@@ -132,10 +164,10 @@ impl AppView {
         self.search.update(cx, |state, cx| {
             state.set_value(query.to_owned(), window, cx)
         });
-        self.run_search(window, cx);
+        self.run_search(cx);
     }
 
-    fn run_search(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn run_search(&mut self, cx: &mut Context<Self>) {
         let query = self.query(cx);
         self.rows = self.library.search(&query, self.scope);
         self.selected = None;
@@ -272,6 +304,7 @@ impl AppView {
     }
 
     fn focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode = Mode::Dictionary;
         self.search.update(cx, |state, cx| state.focus(window, cx));
         window.dispatch_action(Box::new(SelectAll), cx);
     }
@@ -284,7 +317,12 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let modifiers = &event.keystroke.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+        if self.mode != Mode::Dictionary
+            || modifiers.control
+            || modifiers.alt
+            || modifiers.platform
+            || modifiers.function
+        {
             return;
         }
         let Some(text) = event
@@ -304,9 +342,9 @@ impl AppView {
         cx.stop_propagation();
     }
 
-    fn set_scope(&mut self, scope: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    fn set_scope(&mut self, scope: Option<usize>, _: &mut Window, cx: &mut Context<Self>) {
         self.scope = scope;
-        self.run_search(window, cx);
+        self.run_search(cx);
     }
 
     fn add_dictionary(&mut self, _: &AddDictionary, _: &mut Window, cx: &mut Context<Self>) {
@@ -393,18 +431,91 @@ impl AppView {
     fn finish_import(&mut self, mut messages: Vec<String>, cx: &mut Context<Self>) {
         self.import = None;
         messages.extend(self.library.reload());
-        self.rows.clear();
-        self.selected = None;
+        self.status = Some(messages.join(" · ").into());
+        self.library_changed(cx);
+    }
+
+    /// Resets everything that refers to dictionaries by index, after the set
+    /// of dictionaries changed.
+    fn library_changed(&mut self, cx: &mut Context<Self>) {
         self.shown = None;
         self.scope = None;
         self.history.clear();
-        self.status = Some(messages.join(" · ").into());
-        let query = self.query(cx);
-        self.rows = self.library.search(&query, None);
-        if !self.rows.is_empty() {
-            self.select(0, false, cx);
+        self.run_search(cx);
+    }
+
+    fn toggle_settings(&mut self, _: &ToggleSettings, window: &mut Window, cx: &mut Context<Self>) {
+        match self.mode {
+            Mode::Dictionary => {
+                self.mode = Mode::Settings;
+                window.focus(&self.focus_handle, cx);
+                cx.notify();
+            }
+            Mode::Settings => self.close_settings(&CloseSettings, window, cx),
         }
+    }
+
+    fn close_settings(&mut self, _: &CloseSettings, window: &mut Window, cx: &mut Context<Self>) {
+        if self.mode != Mode::Settings {
+            cx.propagate();
+            return;
+        }
+        self.mode = Mode::Dictionary;
+        self.search.update(cx, |state, cx| state.focus(window, cx));
         cx.notify();
+    }
+
+    fn set_dictionary_enabled(
+        &mut self,
+        identifier: &str,
+        enabled: bool,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let disabled = &mut self.settings.settings.disabled_dictionaries;
+        if enabled {
+            disabled.remove(identifier);
+        } else {
+            disabled.insert(identifier.to_owned());
+        }
+        self.library.set_disabled(disabled.clone());
+        self.save_settings();
+        if self.scope.is_some_and(|s| !self.library.is_enabled(s)) {
+            self.scope = None;
+        }
+        self.run_search(cx);
+    }
+
+    fn delete_dictionary(&mut self, identifier: &str, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.library.position(identifier) else {
+            return;
+        };
+        let name = self.library.dicts()[ix].meta().name.clone();
+        self.status = Some(match self.library.delete(ix) {
+            Ok(()) => format!("Deleted {name}").into(),
+            Err(e) => format!("Could not delete all of {name}: {e}").into(),
+        });
+        if self
+            .settings
+            .settings
+            .disabled_dictionaries
+            .remove(identifier)
+        {
+            self.save_settings();
+        }
+        self.library_changed(cx);
+    }
+
+    fn save_settings(&mut self) {
+        if let Err(e) = self.settings.save() {
+            self.status = Some(
+                format!(
+                    "Could not save settings to {}: {e}",
+                    self.settings.path().display()
+                )
+                .into(),
+            );
+        }
     }
 
     fn render_toolbar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -468,10 +579,45 @@ impl AppView {
                         this.add_dictionary(&AddDictionary, window, cx)
                     })),
             )
+            .child(
+                Button::new("settings")
+                    .ghost()
+                    .icon(IconName::Settings)
+                    .tooltip("Settings")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_settings(&ToggleSettings, window, cx)
+                    })),
+            )
+    }
+
+    fn render_settings_header(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        h_flex()
+            .gap_2()
+            .p_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                Button::new("close-settings")
+                    .ghost()
+                    .icon(IconName::ArrowLeft)
+                    .tooltip("Back to Dictionary")
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_settings(&CloseSettings, window, cx)
+                    })),
+            )
+            .child(div().text_sm().font_semibold().child("Settings"))
+    }
+
+    /// Indices of the dictionaries included in searches across all of them.
+    fn enabled_dicts(&self) -> Vec<usize> {
+        (0..self.library.dicts().len())
+            .filter(|&ix| self.library.is_enabled(ix))
+            .collect()
     }
 
     fn render_scopes(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.library.dicts().len() < 2 {
+        let enabled = self.enabled_dicts();
+        if enabled.len() < 2 {
             return None;
         }
         let mut row = h_flex()
@@ -488,7 +634,8 @@ impl AppView {
                     .selected(self.scope.is_none())
                     .on_click(cx.listener(|this, _, window, cx| this.set_scope(None, window, cx))),
             );
-        for (ix, dict) in self.library.dicts().iter().enumerate() {
+        for ix in enabled {
+            let dict = &self.library.dicts()[ix];
             row =
                 row.child(
                     Button::new(("scope", ix))
@@ -506,7 +653,7 @@ impl AppView {
 
     fn render_results(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let show_dict = self.scope.is_none() && self.library.dicts().len() > 1;
+        let show_dict = self.scope.is_none() && self.enabled_dicts().len() > 1;
         div()
             .w(px(280.))
             .h_full()
@@ -615,8 +762,7 @@ impl AppView {
 
     fn render_status(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let text: SharedString = if let Some(job) = &self.import {
-            let p = f32::from_bits(job.progress.load(Ordering::Relaxed));
-            format!("{} {:.0}%", job.label, p * 100.).into()
+            format!("{} {:.0}%", job.label, job.progress() * 100.).into()
         } else {
             self.status.clone()?
         };
@@ -642,20 +788,28 @@ impl Render for AppView {
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::go_forward))
             .on_action(cx.listener(Self::add_dictionary))
+            .on_action(cx.listener(Self::toggle_settings))
+            .on_action(cx.listener(Self::close_settings))
             .on_key_down(cx.listener(Self::type_to_search))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(TitleBar::new().child(div().text_sm().child("Dictionary")))
-            .child(self.render_toolbar(cx))
-            .children(self.render_scopes(cx))
-            .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_results(cx))
-                    .child(self.render_definition(cx)),
-            )
+            .map(|el| match self.mode {
+                Mode::Dictionary => el
+                    .child(self.render_toolbar(cx))
+                    .children(self.render_scopes(cx))
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.render_results(cx))
+                            .child(self.render_definition(cx)),
+                    ),
+                Mode::Settings => el
+                    .child(self.render_settings_header(cx))
+                    .child(div().flex_1().min_h_0().child(self.render_settings(cx))),
+            })
             .children(self.render_status(cx))
     }
 }

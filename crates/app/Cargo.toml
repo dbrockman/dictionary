@@ -12,6 +12,8 @@ clap = { version = "4.6.7", features = ["derive"] }
 dictdb = { version = "0.1.0", path = "../dictdb" }
 gpui-kit = "0.7.1"
 import = { version = "0.1.0", path = "../import" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 
 [[bin]]
 name = "dictionary"
