@@ -92,7 +92,7 @@ impl AppView {
             .outline()
             .label("Add dictionary…")
             .loading(importing.is_some())
-            .on_click(cx.listener(|this, _, _, cx| this.add_dictionary(cx)));
+            .on_click(cx.listener(|this, _, window, cx| this.add_dictionary(window, cx)));
         group.child(setting_row(
             "add-dictionary-row",
             None,
@@ -238,7 +238,7 @@ fn confirm_delete(
 }
 
 /// `113953` → `113,953`.
-fn format_count(n: u32) -> String {
+pub(super) fn format_count(n: u32) -> String {
     let digits = n.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, c) in digits.chars().enumerate() {

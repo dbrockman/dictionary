@@ -10,6 +10,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Escape, Input, InputEvent, InputState, MoveDown, MoveUp, SelectAll,
 };
+use gpui_kit::component::notification::Notification;
 use gpui_kit::component::resizable::{
     ResizablePanelEvent, ResizableState, h_resizable, resizable_panel,
 };
@@ -17,8 +18,8 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, TitleBar, h_flex,
-    v_flex,
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, StyledExt as _, TitleBar,
+    WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -88,13 +89,16 @@ pub fn bind_keys(cx: &mut App) {
 /// The entry currently shown in the definition pane.
 struct Shown {
     page: Page,
-    html: SharedString,
+    /// The entry's HTML, or why it could not be loaded.
+    html: Result<SharedString, SharedString>,
 }
+
+/// What importing one path came to: a success or an error message.
+type ImportOutcome = Result<String, String>;
 
 /// A running import, shared with its background thread.
 struct ImportJob {
     progress: Arc<AtomicU32>,
-    label: SharedString,
 }
 
 impl ImportJob {
@@ -127,7 +131,6 @@ pub struct AppView {
     split: Entity<ResizableState>,
     /// Keeps app shortcuts working when focus is not in the search field.
     focus_handle: FocusHandle,
-    status: Option<SharedString>,
     import: Option<ImportJob>,
     _subscriptions: Vec<Subscription>,
 }
@@ -167,7 +170,6 @@ impl AppView {
             scope_scroll: ScrollHandle::new(),
             split,
             focus_handle: cx.focus_handle(),
-            status: None,
             import: None,
             _subscriptions: subscriptions,
         };
@@ -208,7 +210,7 @@ impl AppView {
         };
         let rems = (width / window.rem_size() * 10.).round() / 10.;
         self.settings.settings.results_width = Some(rems);
-        self.save_settings();
+        self.save_settings(window, cx);
     }
 
     fn query(&self, cx: &App) -> SharedString {
@@ -273,22 +275,17 @@ impl AppView {
         if self.shown.as_ref().is_some_and(|s| s.page == page) {
             return;
         }
-        let html = match self.library.entry_html(page.dict, page.entry) {
-            Ok(html) => html,
-            Err(e) => {
-                self.status = Some(format!("Could not load entry: {e}").into());
-                cx.notify();
-                return;
-            }
-        };
+        // A failure is shown in the definition pane, where the entry would be.
+        let html = self
+            .library
+            .entry_html(page.dict, page.entry)
+            .map(SharedString::from)
+            .map_err(SharedString::from);
         if record && let Some(previous) = self.shown.take() {
             self.history.push(previous.page);
         }
         self.sync_selection(&page);
-        self.shown = Some(Shown {
-            page,
-            html: html.into(),
-        });
+        self.shown = Some(Shown { page, html });
         cx.notify();
     }
 
@@ -322,10 +319,10 @@ impl AppView {
             let prefer = self.shown.as_ref().map(|s| s.page.dict);
             match self.library.entry_by_id(id, prefer) {
                 Some((dict, entry)) => self.show(Page { dict, entry }, true, cx),
-                None => {
-                    self.status = Some(format!("Entry {id:?} not found").into());
-                    cx.notify();
-                }
+                None => window.push_notification(
+                    Notification::error("Couldn’t find the linked entry in any dictionary."),
+                    cx,
+                ),
             }
         } else if url.starts_with("http://")
             || url.starts_with("https://")
@@ -431,7 +428,7 @@ impl AppView {
     }
 
     /// Asks for dictionaries to import, then imports them in the background.
-    fn add_dictionary(&mut self, cx: &mut Context<Self>) {
+    fn add_dictionary(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.import.is_some() {
             return;
         }
@@ -441,23 +438,23 @@ impl AppView {
             multiple: true,
             prompt: Some("Import".into()),
         });
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
                 return;
             };
-            this.update(cx, |this, cx| this.start_import(paths, cx))
+            this.update_in(cx, |this, window, cx| this.start_import(paths, window, cx))
                 .ok();
         })
         .detach();
     }
 
-    /// Imports `paths` one after another on a background thread.
-    fn start_import(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+    /// Imports `paths` one after another on a background thread. Progress
+    /// shows next to the Add button; the outcome arrives as notifications.
+    fn start_import(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
         let progress = Arc::new(AtomicU32::new(0));
-        let outcome: Arc<Mutex<Option<Vec<String>>>> = Arc::default();
+        let outcome: Arc<Mutex<Option<Vec<ImportOutcome>>>> = Arc::default();
         self.import = Some(ImportJob {
             progress: progress.clone(),
-            label: "Importing…".into(),
         });
         cx.notify();
 
@@ -465,38 +462,42 @@ impl AppView {
         let task_outcome = outcome.clone();
         let total = paths.len() as f32;
         std::thread::spawn(move || {
-            let mut messages = Vec::new();
+            let mut outcomes = Vec::new();
             for (i, path) in paths.iter().enumerate() {
                 let mut report = |p: f32| {
                     progress.store(((i as f32 + p) / total).to_bits(), Ordering::Relaxed);
                 };
-                match import::import(path, &library_dir, &mut report) {
-                    Ok(r) => messages.push(format!(
-                        "Imported {} ({} entries{})",
+                let file_name = path.file_name().unwrap_or(path.as_os_str());
+                outcomes.push(match import::import(path, &library_dir, &mut report) {
+                    Ok(r) => Ok(format!(
+                        "Imported {} with {} entries{}.",
                         r.meta.name,
-                        r.meta.entry_count,
-                        if r.warning_count > 0 {
-                            format!(", {} warnings", r.warning_count)
-                        } else {
-                            String::new()
+                        settings_page::format_count(r.meta.entry_count),
+                        match r.warning_count {
+                            0 => String::new(),
+                            1 => " (1 entry skipped)".into(),
+                            n => format!(
+                                " ({} entries skipped)",
+                                settings_page::format_count(n as u32)
+                            ),
                         }
                     )),
-                    Err(e) => messages.push(format!("Import failed: {e}")),
-                }
+                    Err(e) => Err(format!("Couldn’t import {}: {e}", file_name.display())),
+                });
             }
-            *task_outcome.lock().unwrap() = Some(messages);
+            *task_outcome.lock().unwrap() = Some(outcomes);
         });
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
                 let done = outcome.lock().unwrap().take();
                 let keep_going = this
-                    .update(cx, |this, cx| {
-                        if let Some(messages) = done {
-                            this.finish_import(messages, cx);
+                    .update_in(cx, |this, window, cx| {
+                        if let Some(outcomes) = done {
+                            this.finish_import(outcomes, window, cx);
                             false
                         } else {
                             cx.notify();
@@ -512,10 +513,22 @@ impl AppView {
         .detach();
     }
 
-    fn finish_import(&mut self, mut messages: Vec<String>, cx: &mut Context<Self>) {
+    fn finish_import(
+        &mut self,
+        outcomes: Vec<ImportOutcome>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.import = None;
-        messages.extend(self.library.reload());
-        self.status = Some(messages.join(" · ").into());
+        let reload_errors = self.library.reload().into_iter().map(Err);
+        for outcome in outcomes.into_iter().chain(reload_errors) {
+            let note = match outcome {
+                Ok(message) => Notification::success(message),
+                // Failures stay until dismissed, so they are not missed.
+                Err(message) => Notification::error(message).autohide(false),
+            };
+            window.push_notification(note, cx);
+        }
         self.library_changed(cx);
     }
 
@@ -553,7 +566,7 @@ impl AppView {
         &mut self,
         identifier: &str,
         enabled: bool,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let disabled = &mut self.settings.settings.disabled_dictionaries;
@@ -563,42 +576,42 @@ impl AppView {
             disabled.insert(identifier.to_owned());
         }
         self.library.set_disabled(disabled.clone());
-        self.save_settings();
+        self.save_settings(window, cx);
         if self.scope.is_some_and(|s| !self.library.is_enabled(s)) {
             self.scope = None;
         }
         self.run_search(cx);
     }
 
-    fn delete_dictionary(&mut self, identifier: &str, _: &mut Window, cx: &mut Context<Self>) {
+    /// Deletes a dictionary. Success needs no message: the dictionary leaves
+    /// the list.
+    fn delete_dictionary(&mut self, identifier: &str, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.library.position(identifier) else {
             return;
         };
         let name = self.library.dicts()[ix].meta().name.clone();
-        self.status = Some(match self.library.delete(ix) {
-            Ok(()) => format!("Deleted {name}").into(),
-            Err(e) => format!("Could not delete all of {name}: {e}").into(),
-        });
+        if let Err(e) = self.library.delete(ix) {
+            let message = format!("Couldn’t delete all of {name}’s files: {e}");
+            window.push_notification(Notification::error(message).autohide(false), cx);
+        }
         if self
             .settings
             .settings
             .disabled_dictionaries
             .remove(identifier)
         {
-            self.save_settings();
+            self.save_settings(window, cx);
         }
         self.library_changed(cx);
     }
 
-    fn save_settings(&mut self) {
+    fn save_settings(&mut self, window: &mut Window, cx: &mut App) {
         if let Err(e) = self.settings.save() {
-            self.status = Some(
-                format!(
-                    "Could not save settings to {}: {e}",
-                    self.settings.path().display()
-                )
-                .into(),
+            let message = format!(
+                "Couldn’t save settings to {}: {e}",
+                self.settings.path().display()
             );
+            window.push_notification(Notification::error(message).autohide(false), cx);
         }
     }
 
@@ -767,6 +780,15 @@ impl AppView {
                                 };
                                 let dict_name = show_dict
                                     .then(|| this.library.dicts()[row.dict].meta().name.clone());
+                                // Identity comes from what the row opens, not its position, so
+                                // element state does not pass to another row as results change.
+                                let meta = this.library.dicts()[row.dict].meta();
+                                let row_id = SharedString::from(match &row.hit.anchor {
+                                    Some(anchor) => {
+                                        format!("{}/{}#{anchor}", meta.identifier, row.hit.entry)
+                                    }
+                                    None => format!("{}/{}", meta.identifier, row.hit.entry),
+                                });
                                 // Selected and hovered rows are inset, rounded surfaces like
                                 // sidebar menu items; the text stays on the 12px spine.
                                 let surface = h_flex()
@@ -817,7 +839,7 @@ impl AppView {
                                             })),
                                     );
                                 div()
-                                    .id(ix)
+                                    .id(row_id)
                                     .w_full()
                                     .h(px(ROW_HEIGHT))
                                     .px_1()
@@ -846,26 +868,31 @@ impl AppView {
             } else {
                 "No results."
             };
-            return v_flex()
-                .flex_1()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .text_color(theme.muted_foreground)
-                .child(IconName::BookOpen)
-                .child(message)
+            return pane_message(IconName::BookOpen, message, None, theme).into_any_element();
+        };
+        let html = match &shown.html {
+            Ok(html) => html.clone(),
+            Err(error) => {
+                let detail = format!("{error}. Importing the dictionary again may fix it.");
+                return pane_message(
+                    IconName::CircleX,
+                    "Couldn’t load this entry.",
+                    Some(detail.into()),
+                    theme,
+                )
                 .into_any_element();
+            }
         };
         let this = cx.weak_entity();
-        let id = SharedString::from(format!("entry-{}-{}", shown.page.dict, shown.page.entry));
+        let identifier = &self.library.dicts()[shown.page.dict].meta().identifier;
+        let id = SharedString::from(format!("entry-{identifier}-{}", shown.page.entry));
         div()
             .flex_1()
             .size_full()
             .overflow_hidden()
             .text_base()
             .child(
-                TextView::html(id, shown.html.clone())
+                TextView::html(id, html)
                     .scrollable(true)
                     .selectable(true)
                     .px_6()
@@ -879,24 +906,26 @@ impl AppView {
             )
             .into_any_element()
     }
+}
 
-    fn render_status(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let text: SharedString = if let Some(job) = &self.import {
-            format!("{} {:.0}%", job.label, job.progress() * 100.).into()
-        } else {
-            self.status.clone()?
-        };
-        Some(
-            div()
-                .px_3()
-                .py_1()
-                .text_xs()
-                .border_t_1()
-                .border_color(cx.theme().border)
-                .text_color(cx.theme().muted_foreground)
-                .child(text),
-        )
-    }
+/// A centered message in the definition pane: empty states and errors.
+fn pane_message(
+    icon: IconName,
+    message: &'static str,
+    detail: Option<SharedString>,
+    theme: &gpui_kit::component::Theme,
+) -> impl IntoElement {
+    v_flex()
+        .flex_1()
+        .size_full()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .px_6()
+        .text_color(theme.muted_foreground)
+        .child(icon)
+        .child(message)
+        .children(detail.map(|detail| div().max_w(rems(30.)).text_sm().text_center().child(detail)))
 }
 
 impl Render for AppView {
@@ -931,6 +960,5 @@ impl Render for AppView {
                     .child(self.render_settings_header(cx))
                     .child(div().flex_1().min_h_0().child(self.render_settings(cx))),
             })
-            .children(self.render_status(cx))
     }
 }
