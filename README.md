@@ -27,8 +27,8 @@ Vulkan loader and fontconfig) and use `cargo` directly.
 
 ## Importing dictionaries
 
-From the app, click **+** (or press Ctrl+O) and choose a `.dictionary` bundle or a
-DDK project folder. Or use the command line:
+From the app, open Settings (gear button or Ctrl+,), click **Add…** and choose a
+`.dictionary` bundle or a DDK project folder. Or use the command line:
 
 ```sh
 dictionary import ~/Downloads/Oxford.dictionary MyProject/
@@ -57,7 +57,6 @@ Settings are saved in `settings.json` under `$XDG_CONFIG_HOME/dictionary/` when
 | Esc | clear the search |
 | Ctrl+L / Ctrl+F | focus the search field |
 | Alt+← / Alt+→ (Ctrl+[ / Ctrl+]) | back / forward |
-| Ctrl+O | import a dictionary |
 | Ctrl+, | settings: enable, disable, add and delete dictionaries |
 | Ctrl+Q | quit |
 

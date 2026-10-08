@@ -29,7 +29,6 @@ actions!(
         FocusSearch,
         Back,
         Forward,
-        AddDictionary,
         ToggleSettings,
         CloseSettings,
         Quit
@@ -47,7 +46,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("alt-right", Forward, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-[", Back, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-]", Forward, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-o", AddDictionary, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-,", ToggleSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CloseSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("secondary-q", Quit, None),
@@ -347,7 +345,8 @@ impl AppView {
         self.run_search(cx);
     }
 
-    fn add_dictionary(&mut self, _: &AddDictionary, _: &mut Window, cx: &mut Context<Self>) {
+    /// Asks for dictionaries to import, then imports them in the background.
+    fn add_dictionary(&mut self, cx: &mut Context<Self>) {
         if self.import.is_some() {
             return;
         }
@@ -570,16 +569,6 @@ impl AppView {
                     ),
             )
             .child(
-                Button::new("add")
-                    .ghost()
-                    .icon(IconName::Plus)
-                    .tooltip("Add Dictionary…")
-                    .loading(self.import.is_some())
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.add_dictionary(&AddDictionary, window, cx)
-                    })),
-            )
-            .child(
                 Button::new("settings")
                     .ghost()
                     .icon(IconName::Settings)
@@ -720,7 +709,7 @@ impl AppView {
         let theme = cx.theme();
         let Some(shown) = &self.shown else {
             let message = if self.library.is_empty() {
-                "No dictionaries yet. Use + to import a .dictionary bundle or Dictionary Development Kit XML."
+                "No dictionaries yet. Import a .dictionary bundle or Dictionary Development Kit XML in Settings (Ctrl+,)."
             } else if self.query(cx).is_empty() {
                 "Type a word to look it up."
             } else {
@@ -787,7 +776,6 @@ impl Render for AppView {
             .on_action(cx.listener(Self::focus_search))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::go_forward))
-            .on_action(cx.listener(Self::add_dictionary))
             .on_action(cx.listener(Self::toggle_settings))
             .on_action(cx.listener(Self::close_settings))
             .on_key_down(cx.listener(Self::type_to_search))

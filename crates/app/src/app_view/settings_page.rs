@@ -9,7 +9,7 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex};
 use gpui_kit::*;
 
-use super::{AddDictionary, AppView};
+use super::AppView;
 
 impl AppView {
     pub(super) fn render_settings(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -61,11 +61,8 @@ impl AppView {
                         .label("Add…")
                         .loading(importing.is_some())
                         .with_size(options.size())
-                        .on_click(move |_, window, cx| {
-                            view.update(cx, |this, cx| {
-                                this.add_dictionary(&AddDictionary, window, cx)
-                            })
-                            .ok();
+                        .on_click(move |_, _, cx| {
+                            view.update(cx, |this, cx| this.add_dictionary(cx)).ok();
                         })
                 }
             }),
