@@ -1,4 +1,5 @@
-//! The settings page: imported dictionaries and where their data is stored.
+//! The settings page: appearance, imported dictionaries and where data is
+//! stored.
 //!
 //! There is a single page, so it is composed from `GroupBox`es directly.
 //! GPUI Kit's `Settings` component would add a navigation sidebar and search
@@ -8,13 +9,16 @@ use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant};
 use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::label::Label;
+use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::select::Select;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::AppView;
+use crate::config::Appearance;
 
 /// Line length that keeps a row's title and its controls easy to connect.
 const PAGE_MAX_WIDTH: f32 = 40.;
@@ -31,10 +35,105 @@ impl AppView {
                     .px_4()
                     .py_6()
                     .gap_6()
+                    .child(self.render_appearance_group(cx))
                     .child(self.render_dictionaries_group(cx))
                     .child(self.render_storage_group(cx)),
             )
             .overflow_y_scrollbar()
+    }
+
+    fn render_appearance_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        const CHOICES: [(Appearance, &str); 3] = [
+            (Appearance::System, "System"),
+            (Appearance::Light, "Light"),
+            (Appearance::Dark, "Dark"),
+        ];
+        let theme = cx.theme();
+        let (muted, danger) = (theme.muted_foreground, theme.danger);
+        // A problem replaces the row's help text, in the danger color, so it
+        // sits next to the control it is about.
+        let help = |problem: &Option<String>, help: &'static str| match problem {
+            Some(problem) => div().text_color(danger).child(problem.clone()),
+            None => div().child(help),
+        };
+
+        let current = self.settings.settings.appearance;
+        let mode = RadioGroup::horizontal("appearance")
+            .children(CHOICES.map(|(_, label)| label))
+            .selected_index(CHOICES.iter().position(|(choice, _)| *choice == current))
+            .on_change(cx.listener(|this, ix: &usize, window, cx| {
+                this.set_appearance(CHOICES[*ix].0, window, cx)
+            }));
+        let theme_row = |id: &'static str, title: &'static str, mode: ThemeMode, text| {
+            let ix = usize::from(mode.is_dark());
+            setting_row(
+                id,
+                Some(title.into()),
+                help(&self.theme.problems[ix], text),
+                // The select grows to fill its parent, so the parent sets its width.
+                div()
+                    .flex_none()
+                    .w(rems(14.))
+                    .child(Select::new(self.theme.select(mode))),
+                cx,
+            )
+        };
+        let light = theme_row(
+            "light-theme",
+            "Light theme",
+            ThemeMode::Light,
+            "Used when the app is light.",
+        );
+        let dark = theme_row(
+            "dark-theme",
+            "Dark theme",
+            ThemeMode::Dark,
+            "Used when the app is dark.",
+        );
+
+        let dir = self.theme.themes.dir().to_owned();
+        let folder_description = v_flex().child(dir.display().to_string()).children(
+            self.theme
+                .themes
+                .file_errors()
+                .iter()
+                .map(|error| div().text_color(danger).child(error.clone())),
+        );
+        let open = Button::new("open-themes")
+            .outline()
+            .label("Open folder")
+            .on_click(move |_, _, cx| {
+                std::fs::create_dir_all(&dir).ok();
+                cx.open_with_system(&dir);
+            });
+
+        let title = v_flex().gap_1().child("Appearance").child(
+            Label::new(
+                "Theme files in the themes folder join the lists and reload when they change.",
+            )
+            .text_sm()
+            .text_color(muted),
+        );
+        GroupBox::new()
+            .id("appearance")
+            .title(title)
+            .gap_4()
+            .child(setting_row(
+                "appearance-mode",
+                Some("Mode".into()),
+                "System follows the operating system and switches with it.",
+                mode,
+                cx,
+            ))
+            .child(light)
+            .child(dark)
+            .child(setting_row(
+                "themes-folder",
+                Some("Themes folder".into()),
+                folder_description,
+                open,
+                cx,
+            ))
     }
 
     fn render_dictionaries_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -192,7 +291,7 @@ impl AppView {
 fn setting_row(
     id: impl Into<ElementId>,
     title: Option<SharedString>,
-    description: impl Into<SharedString>,
+    description: impl IntoElement,
     controls: impl IntoElement,
     cx: &App,
 ) -> impl IntoElement {
@@ -211,7 +310,7 @@ fn setting_row(
                     div()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(description.into()),
+                        .child(description),
                 ),
         )
         .child(controls)

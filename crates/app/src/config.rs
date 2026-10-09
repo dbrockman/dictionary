@@ -43,6 +43,30 @@ pub struct Settings {
     /// Width of the result list in rems, once the user has resized it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results_width: Option<f32>,
+    /// Whether the app is light, dark or follows the system.
+    pub appearance: Appearance,
+    /// Name of the theme used when the app is light (see `themes.rs`), or
+    /// `None` for GPUI Kit's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub light_theme: Option<String>,
+    /// Name of the theme used when the app is dark.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dark_theme: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    /// Light or dark as the operating system is, switching when it does.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+/// The themes folder, next to the settings file.
+pub fn themes_dir(config_dir: &Path) -> PathBuf {
+    config_dir.join("themes")
 }
 
 /// [`Settings`] together with the file they are saved to.
@@ -137,7 +161,11 @@ mod tests {
             .settings
             .disabled_dictionaries
             .insert("com.example".into());
+        store.settings.appearance = Appearance::Dark;
+        store.settings.dark_theme = Some("Ayu Dark".into());
         store.save().unwrap();
+        let json = std::fs::read_to_string(store.path()).unwrap();
+        assert!(json.contains(r#""appearance": "dark""#), "{json}");
         let (reloaded, error) = SettingsStore::load(&dir);
         assert!(error.is_none());
         assert_eq!(reloaded.settings, store.settings);

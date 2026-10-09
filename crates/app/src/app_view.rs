@@ -1,7 +1,7 @@
 //! The main window: search field, result list and definition pane.
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -30,7 +30,9 @@ use serde::Deserialize;
 use crate::config::SettingsStore;
 use crate::history::{History, Page};
 use crate::library::{Library, Row};
+use appearance::ThemeState;
 
+mod appearance;
 mod settings_page;
 
 actions!(
@@ -136,6 +138,7 @@ pub struct AppView {
     focus_handle: FocusHandle,
     /// The title last given to the window, so it is only set when it changes.
     window_title: SharedString,
+    theme: ThemeState,
     import: Option<ImportJob>,
     _subscriptions: Vec<Subscription>,
 }
@@ -154,10 +157,14 @@ impl AppView {
                 .clean_on_escape()
         });
         let split = cx.new(|_| ResizableState::default());
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe_in(&search, window, Self::on_search_event),
             cx.subscribe_in(&split, window, Self::on_split_resized),
         ];
+        let config_dir = settings.path().parent().unwrap_or(Path::new("."));
+        let (theme, theme_subscriptions) =
+            Self::init_themes(&crate::config::themes_dir(config_dir), window, cx);
+        subscriptions.extend(theme_subscriptions);
         search.update(cx, |state, cx| state.focus(window, cx));
 
         library.set_disabled(settings.settings.disabled_dictionaries.clone());
@@ -176,9 +183,11 @@ impl AppView {
             split,
             focus_handle: cx.focus_handle(),
             window_title: APP_NAME.into(),
+            theme,
             import: None,
             _subscriptions: subscriptions,
         };
+        this.apply_themes(window, cx);
         if let Some(query) = initial_query {
             this.set_query(&query, window, cx);
         }
@@ -551,6 +560,7 @@ impl AppView {
         match self.mode {
             Mode::Dictionary => {
                 self.mode = Mode::Settings;
+                self.sync_theme_selects(window, cx);
                 window.focus(&self.focus_handle, cx);
                 cx.notify();
             }

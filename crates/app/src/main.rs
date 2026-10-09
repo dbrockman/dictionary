@@ -7,13 +7,14 @@ mod app_view;
 mod config;
 mod history;
 mod library;
+mod themes;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use gpui_kit::component::{Theme, TitleBar};
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 use crate::app_view::{AppView, Quit};
@@ -120,7 +121,6 @@ fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>)
                 ..Default::default()
             };
             gpui_kit::open_window(options, cx, |window, cx| {
-                Theme::sync_system_appearance(Some(window), cx);
                 window.set_window_title("Dictionary");
                 if let Some(t) = started {
                     window.on_next_frame(move |_, _| eprintln!("first frame: {:?}", t.elapsed()));
