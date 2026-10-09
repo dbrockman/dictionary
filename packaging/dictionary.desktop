@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Dictionary
+GenericName=Dictionary
+Comment=Look up words in your dictionaries
+Exec=dictionary
+Icon=dictionary
+Terminal=false
+Categories=Office;Dictionary;
+Keywords=word;definition;thesaurus;lookup;
+StartupWMClass=dictionary
