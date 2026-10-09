@@ -26,6 +26,8 @@ Running a single test: `just test -p import --test apple_bundle modern_compresse
 
 The binary is `dictionary` (package `app`). `dictionary import <paths>…` imports without a GUI, `--library DIR` (or `DICTIONARY_LIBRARY`) overrides the library location, and `--timings` prints startup timings.
 
+`nix build` builds the installable package (`packages.default` in `flake.nix`, plus the desktop file and icon in `packaging/`, resized to the hicolor sizes at build time). GPUI `dlopen`s Wayland, Vulkan, xkbcommon and fontconfig, so the package adds them to the binary's RPATH; keep that list in sync with the dev shell's `LD_LIBRARY_PATH` (both use `runtimeLibraries`). The `Nix package` workflow pushes builds of `main` to the `dbrockman` Cachix cache. Its source fileset covers only `Cargo.toml`, `Cargo.lock` and `crates/`, so changes elsewhere don't invalidate the cache.
+
 ## Architecture
 
 The workspace has three crates, forming a one-way pipeline: **import → dictdb → app**.

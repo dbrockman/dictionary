@@ -9,6 +9,47 @@ Dictionaries are imported once into the app's own memory-mapped format, so the
 app opens instantly and searches as you type. No dictionaries are bundled; you
 import your own.
 
+## Installing with Nix
+
+The flake builds the app for `x86_64-linux` and `aarch64-linux`. CI pushes the
+builds of `main` to the [dbrockman](https://app.cachix.org/cache/dbrockman)
+Cachix cache, so Nix downloads the binary instead of compiling it. Nix asks
+whether to use the cache the first time; answer yes.
+
+```sh
+nix run github:dbrockman/dictionary            # try it
+nix profile install github:dbrockman/dictionary
+```
+
+On NixOS, add the flake as an input and install the package:
+
+```nix
+{
+  inputs.dictionary.url = "github:dbrockman/dictionary";
+
+  outputs = { nixpkgs, dictionary, ... }: {
+    nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [ dictionary.packages.${pkgs.system}.default ];
+          nix.settings = {
+            substituters = [ "https://dbrockman.cachix.org" ];
+            trusted-public-keys = [ "dbrockman.cachix.org-1:oUXtudDZ0/g0qNzHvdMJSf93Orf8Fn+9NUJMUQJXP9I=" ];
+          };
+        })
+      ];
+    };
+  };
+}
+```
+
+There is also `overlays.default`, which adds `pkgs.dictionary`.
+
+Don't make the input follow your own nixpkgs
+(`inputs.dictionary.inputs.nixpkgs.follows`). The cached binaries are built
+against this flake's locked nixpkgs. With a different one, Nix compiles the app
+locally, which takes a while and needs a recent Rust.
+
 ## Building
 
 On NixOS (or anywhere with Nix), the dev shell provides the libraries GPUI needs:
