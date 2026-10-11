@@ -3,6 +3,7 @@ name = "app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 publish.workspace = true
 
 [dependencies]
@@ -16,6 +17,7 @@ import = { version = "0.1.0", path = "../import" }
 notify = "8.2.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+ureq = { version = "3.4.2", default-features = false, features = ["json", "rustls"] }
 
 [[bin]]
 name = "dictionary"

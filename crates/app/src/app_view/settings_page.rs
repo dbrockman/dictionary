@@ -1,12 +1,12 @@
-//! The settings page: appearance, imported dictionaries and where data is
-//! stored.
+//! The settings page: appearance, imported dictionaries, where data is
+//! stored, and the app's version.
 //!
 //! There is a single page, so it is composed from `GroupBox`es directly.
 //! GPUI Kit's `Settings` component would add a navigation sidebar and search
 //! for that one page.
 
 use gpui_kit::component::WindowExt as _;
-use gpui_kit::component::button::{Button, ButtonVariant};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::group_box::GroupBox;
 use gpui_kit::component::label::Label;
 use gpui_kit::component::radio::RadioGroup;
@@ -17,8 +17,9 @@ use gpui_kit::component::{ActiveTheme as _, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::AppView;
+use super::{AppView, UpdateCheck};
 use crate::config::Appearance;
+use crate::update::{REPOSITORY, VERSION};
 
 /// Line length that keeps a row's title and its controls easy to connect.
 const PAGE_MAX_WIDTH: f32 = 40.;
@@ -37,7 +38,8 @@ impl AppView {
                     .gap_6()
                     .child(self.render_appearance_group(cx))
                     .child(self.render_dictionaries_group(cx))
-                    .child(self.render_storage_group(cx)),
+                    .child(self.render_storage_group(cx))
+                    .child(self.render_about_group(cx)),
             )
             .overflow_y_scrollbar()
     }
@@ -281,6 +283,62 @@ impl AppView {
                 Some("Settings file".into()),
                 self.settings.path().display().to_string(),
                 open_settings,
+                cx,
+            ))
+    }
+
+    fn render_about_group(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let danger = cx.theme().danger;
+        let status = match &self.update_check {
+            UpdateCheck::NotChecked => None,
+            UpdateCheck::Checking => Some(div().child("Checking for updates…")),
+            UpdateCheck::Done(Ok(Some(release))) if release.is_newer() => {
+                Some(div().child(format!("Version {} is available.", release.version)))
+            }
+            UpdateCheck::Done(Ok(Some(_))) => Some(div().child("This is the latest version.")),
+            UpdateCheck::Done(Ok(None)) => Some(div().child("No releases are published yet.")),
+            UpdateCheck::Done(Err(error)) => Some(div().text_color(danger).child(error.clone())),
+        };
+        let description = v_flex()
+            .child(format!("Dictionary {VERSION}"))
+            .children(status);
+
+        // Once a newer release is known, the button leads to it.
+        let controls = match &self.update_check {
+            UpdateCheck::Done(Ok(Some(release))) if release.is_newer() => {
+                let url = release.url.clone();
+                Button::new("view-release")
+                    .primary()
+                    .label("View release")
+                    .on_click(move |_, _, cx| cx.open_url(&url))
+            }
+            checking => Button::new("check-for-updates")
+                .outline()
+                .label("Check for updates")
+                .loading(matches!(checking, UpdateCheck::Checking))
+                .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx))),
+        };
+
+        let open_repository = Button::new("open-repository")
+            .outline()
+            .label("Open on GitHub")
+            .on_click(|_, _, cx| cx.open_url(REPOSITORY));
+        GroupBox::new()
+            .id("about")
+            .title("About")
+            .gap_4()
+            .child(setting_row(
+                "version",
+                Some("Version".into()),
+                description,
+                controls,
+                cx,
+            ))
+            .child(setting_row(
+                "repository",
+                Some("Source code".into()),
+                REPOSITORY,
+                open_repository,
                 cx,
             ))
     }
