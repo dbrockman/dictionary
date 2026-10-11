@@ -2,6 +2,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
@@ -28,6 +29,32 @@ impl Row {
             (None, Some(title)) => title,
             _ => &self.hit.title,
         }
+    }
+
+    /// The part of [`Row::label`] that the search matched: the longest start
+    /// of the label that normalizes to `normalized_query` (see
+    /// [`dictdb::normalize_key`]), so `Caf` is the match for "cafe" in
+    /// `Café`. `None` for fuzzy hits, and for labels that do not themselves
+    /// start with the query, e.g. the entry `make` found by its key `made`.
+    pub fn label_match(&self, normalized_query: &str) -> Option<Range<usize>> {
+        if self.hit.fuzzy.is_some() || normalized_query.is_empty() {
+            return None;
+        }
+        let label = self.label();
+        let ends = label.char_indices().map(|(i, _)| i).skip(1);
+        let mut matched = None;
+        // Labels are short and only visible rows ask, so normalizing each
+        // prefix is cheap enough.
+        for end in ends.chain([label.len()]) {
+            let key = dictdb::normalize_key(&label[..end]);
+            if key == normalized_query {
+                // Keep going: a combining mark or space may follow.
+                matched = Some(0..end);
+            } else if !normalized_query.starts_with(&key) {
+                break;
+            }
+        }
+        matched
     }
 
     /// Muted text after the label that tells the row apart from others with
@@ -352,6 +379,49 @@ mod tests {
         // Reloading keeps the disabled set.
         library.reload();
         assert!(!library.is_enabled(1));
+    }
+
+    #[test]
+    fn label_match_covers_the_matched_start_of_the_label() {
+        let row = |title: &str, entry_title: Option<&str>| Row {
+            dict: 0,
+            hit: Hit {
+                key: String::new(),
+                title: title.into(),
+                entry: 0,
+                entry_title: entry_title.map(Into::into),
+                entry_detail: None,
+                anchor: None,
+                priority: 0,
+                parental: false,
+                fuzzy: None,
+            },
+        };
+        let matched = |row: &Row, query: &str| {
+            let range = row.label_match(&dictdb::normalize_key(query))?;
+            Some(row.label()[range].to_owned())
+        };
+        assert_eq!(matched(&row("Café", None), "caf"), Some("Caf".into()));
+        assert_eq!(matched(&row("Café", None), "cafe"), Some("Café".into()));
+        // A decomposed accent belongs to the letter before it.
+        assert_eq!(
+            matched(&row("Cafe\u{301}s", None), "cafe"),
+            Some("Cafe\u{301}".into())
+        );
+        assert_eq!(
+            matched(&row("make it", None), "make i"),
+            Some("make i".into())
+        );
+        // The label is the entry title, which the key "made" does not start.
+        assert_eq!(matched(&row("made", Some("make")), "made"), None);
+        assert_eq!(matched(&row("house", None), ""), None);
+
+        let mut fuzzy = row("house", None);
+        fuzzy.hit.fuzzy = Some(dictdb::FuzzyMatch {
+            prefix_edits: 1,
+            word_edits: 1,
+        });
+        assert_eq!(matched(&fuzzy, "hous"), None);
     }
 
     #[test]
