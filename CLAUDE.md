@@ -28,6 +28,10 @@ The binary is `dictionary` (package `app`). `dictionary import <paths>…` impor
 
 `nix build` builds the installable package (`packages.default` in `flake.nix`, plus the desktop file and icon in `packaging/`, resized to the hicolor sizes at build time). GPUI `dlopen`s Wayland, Vulkan, xkbcommon and fontconfig, so the package adds them to the binary's RPATH; keep that list in sync with the dev shell's `LD_LIBRARY_PATH` (both use `runtimeLibraries`). The `Nix package` workflow pushes builds of `main` to the `dbrockman` Cachix cache. Its source fileset covers only `Cargo.toml`, `Cargo.lock` and `crates/`, so changes elsewhere don't invalidate the cache.
 
+## Releases
+
+release-plz (`release-plz.toml`, `.github/workflows/release.yml`) keeps a "Release vX.Y.Z" PR open that bumps the workspace version and updates `CHANGELOG.md`. Merging it tags `vX.Y.Z` and creates the GitHub release that the app's update check finds. The three crates share one version (`version_group`), and only the app is tagged, released and given a changelog. Its changelog includes the library crates' commits. Commit messages are plain imperative sentences, and the git-cliff `[changelog]` section groups them by their first word (Add → Added, Fix → Fixed, Remove → Removed, anything else → Changed). Commits starting with `chore:`, `ci:` or `build:` are left out. release-plz proposes a patch bump. For a minor release, set the version in `[workspace.package]` and `[workspace.dependencies]` in an ordinary PR, and release-plz uses it. Don't edit the release PR, because release-plz regenerates it from `main`. The previous version comes from git tags (`git_only`), and nothing is published to crates.io. Internal path dependencies carry a `version` in `[workspace.dependencies]` because release-plz runs `cargo package`.
+
 ## Architecture
 
 The workspace has three crates, forming a one-way pipeline: **import → dictdb → app**.

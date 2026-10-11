@@ -11,8 +11,8 @@ repository = "https://github.com/dbrockman/dictionary"
 publish = false
 
 [workspace.dependencies]
-dictdb = { path = "crates/dictdb" }
-import = { path = "crates/import" }
+dictdb = { version = "0.1.0", path = "crates/dictdb" }
+import = { version = "0.1.0", path = "crates/import" }
 
 [profile.release]
 lto = "thin"
