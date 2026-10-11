@@ -3,6 +3,16 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/dbrockman/dictionary/compare/v0.1.0...v0.1.1) - 2026-10-11
+
+### Added
+
+- Add typo-tolerant search for misspelled queries
+
+### Changed
+
+- Bold the matched part of result labels
+
 ## [0.1.0](https://github.com/dbrockman/dictionary/releases/tag/v0.1.0) - 2026-10-11
 
 ### Added
