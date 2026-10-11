@@ -7,12 +7,14 @@
 
 mod error;
 pub mod format;
+mod fuzzy;
 mod normalize;
 mod reader;
 mod writer;
 
 pub use error::{Error, Result};
 pub use format::{DictInfo, Meta};
+pub use fuzzy::FuzzyMatch;
 pub use normalize::normalize_key;
 pub use reader::{Dictionary, Hit};
 pub use writer::{DictWriter, EntrySpec, KeySpec};

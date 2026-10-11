@@ -805,6 +805,7 @@ impl AppView {
     fn render_results(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let show_dict = self.scope.is_none() && self.enabled_dicts().len() > 1;
+        let query = dictdb::normalize_key(&self.query(cx));
         div()
             .size_full()
             .relative()
@@ -826,6 +827,16 @@ impl AppView {
                                         .text_color(theme.muted_foreground)
                                         .child(text)
                                 };
+                                // The matched part of the label is bold. Fuzzy hits,
+                                // for a misspelled query, have none.
+                                let label = StyledText::new(row.label().to_owned())
+                                    .with_highlights(row.label_match(&query).map(|range| {
+                                        let bold = HighlightStyle {
+                                            font_weight: Some(FontWeight::BOLD),
+                                            ..Default::default()
+                                        };
+                                        (range, bold)
+                                    }));
                                 let dict_name = show_dict
                                     .then(|| this.library.dicts()[row.dict].meta().name.clone());
                                 // Identity comes from what the row opens, not its position, so
@@ -873,7 +884,7 @@ impl AppView {
                                                     .overflow_hidden()
                                                     .whitespace_nowrap()
                                                     .text_ellipsis()
-                                                    .child(row.label().to_owned()),
+                                                    .child(label),
                                             )
                                             .children(row.detail().map(|d| muted(d.to_owned())))
                                             .children(dict_name.map(|name| {

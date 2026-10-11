@@ -10,10 +10,17 @@ use memmap2::Mmap;
 
 use crate::error::{Error, Result};
 use crate::format::*;
+use crate::fuzzy::{self, FuzzyMatch};
 use crate::normalize::normalize_key;
 
 /// Number of decompressed entry blocks kept in memory per dictionary.
 const BLOCK_CACHE_LEN: usize = 8;
+
+/// Below this many prefix matches, a search also looks for misspellings.
+const FUZZY_THRESHOLD: usize = 10;
+/// Most keys a fuzzy search ranks; bounds its cost for short queries that are
+/// within an edit of many keys.
+const FUZZY_CANDIDATE_LIMIT: usize = 5_000;
 
 /// A search result: one key pointing at one entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,15 +39,19 @@ pub struct Hit {
     pub anchor: Option<String>,
     pub priority: u8,
     pub parental: bool,
+    /// For a match on a misspelled query, how close the key is.
+    pub fuzzy: Option<FuzzyMatch>,
 }
 
 impl Hit {
     /// Search ranking tier for a hit on `normalized_query` (see
     /// [`normalize_key`]): 0 for an exact match, 1 for a headword (a key for a
     /// whole entry), 2 for a phrase (a key pointing at an anchor inside an
-    /// entry, e.g. an idiom).
+    /// entry, e.g. an idiom), 3 for a fuzzy match on a misspelled query.
     pub fn tier(&self, normalized_query: &str) -> u8 {
-        if self.key == normalized_query {
+        if self.fuzzy.is_some() {
+            3
+        } else if self.key == normalized_query {
             0
         } else if self.anchor.is_none() {
             1
@@ -135,6 +146,10 @@ impl Dictionary {
     /// [`Hit::names_entry`]) come first. Each place in an entry (the entry
     /// itself, or one of its anchors) is returned once, for the first key that
     /// leads there.
+    ///
+    /// When there are only a few such hits, headwords whose key starts with
+    /// something an edit or two away from the query follow, closest first
+    /// (see [`Hit::fuzzy`]).
     pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Hit>> {
         let query = normalize_key(query);
         if query.is_empty() || limit == 0 {
@@ -173,7 +188,56 @@ impl Dictionary {
         tiers[0].sort_by_key(|hit| !hit.names_entry(&query));
         let mut hits: Vec<Hit> = tiers.into_iter().flatten().collect();
         hits.truncate(limit);
+        if hits.len() < FUZZY_THRESHOLD.min(limit) {
+            self.fuzzy_search(&query, limit, &mut seen, &mut hits)?;
+        }
         Ok(hits)
+    }
+
+    /// Appends headword hits for keys that start with a misspelling of the
+    /// normalized `query`, up to `limit` hits in all. They are ranked by
+    /// [`FuzzyMatch`], then by how close the key's length is to the query's,
+    /// then by key.
+    fn fuzzy_search(
+        &self,
+        query: &str,
+        limit: usize,
+        seen: &mut HashSet<(u32, u32)>,
+        hits: &mut Vec<Hit>,
+    ) -> Result<()> {
+        let Some(automaton) = fuzzy::automaton(query) else {
+            return Ok(());
+        };
+        let mut candidates = Vec::new();
+        let mut stream = self.keys.search_with_state(&automaton).into_stream();
+        while let Some((key, offset, state)) = stream.next() {
+            // The prefix search already returned these.
+            if key.starts_with(query.as_bytes()) {
+                continue;
+            }
+            let rank = automaton.rank(state, key);
+            let len_diff = key.len().abs_diff(query.len());
+            candidates.push((rank, len_diff, key.to_vec(), offset));
+            if candidates.len() >= FUZZY_CANDIDATE_LIMIT {
+                break;
+            }
+        }
+        candidates.sort_unstable();
+        for (rank, _, key, offset) in candidates {
+            let key = String::from_utf8_lossy(&key);
+            for posting in self.postings_at(offset)? {
+                if hits.len() >= limit {
+                    return Ok(());
+                }
+                if posting.anchor != NO_STRING || !seen.insert((posting.entry, posting.anchor)) {
+                    continue;
+                }
+                let mut hit = self.make_hit(&key, &posting)?;
+                hit.fuzzy = Some(rank);
+                hits.push(hit);
+            }
+        }
+        Ok(())
     }
 
     /// Returns all hits for exactly `word` (after normalization).
@@ -285,6 +349,7 @@ impl Dictionary {
             anchor: self.string(p.anchor)?,
             priority: p.priority,
             parental: p.flags & FLAG_PARENTAL != 0,
+            fuzzy: None,
         })
     }
 
