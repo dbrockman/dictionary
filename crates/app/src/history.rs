@@ -41,6 +41,13 @@ impl History {
         !self.forward.is_empty()
     }
 
+    /// Renumbers the dictionary of every page, after the library reordered them.
+    pub fn remap_dicts(&mut self, new_index: impl Fn(usize) -> usize) {
+        for page in self.back.iter_mut().chain(&mut self.forward) {
+            page.dict = new_index(page.dict);
+        }
+    }
+
     pub fn clear(&mut self) {
         self.back.clear();
         self.forward.clear();
