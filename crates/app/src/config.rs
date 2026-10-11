@@ -1,6 +1,6 @@
 //! User settings, stored as JSON in the platform's config directory.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -40,6 +40,10 @@ fn config_dir_from(var: impl Fn(&str) -> Option<OsString>) -> PathBuf {
 pub struct Settings {
     /// Identifiers of imported dictionaries left out of searches.
     pub disabled_dictionaries: BTreeSet<String>,
+    /// Names the user gave imported dictionaries, by identifier, shown in
+    /// place of the names they came with.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub dictionary_names: BTreeMap<String, String>,
     /// Width of the result list in rems, once the user has resized it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results_width: Option<f32>,
@@ -161,6 +165,10 @@ mod tests {
             .settings
             .disabled_dictionaries
             .insert("com.example".into());
+        store
+            .settings
+            .dictionary_names
+            .insert("com.example".into(), "Example".into());
         store.settings.appearance = Appearance::Dark;
         store.settings.dark_theme = Some("Ayu Dark".into());
         store.save().unwrap();

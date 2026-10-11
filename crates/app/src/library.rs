@@ -1,7 +1,7 @@
 //! The set of imported dictionaries and searching across them.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -74,6 +74,8 @@ pub struct Library {
     sizes: Vec<u64>,
     /// Identifiers of dictionaries left out of searches across all dictionaries.
     disabled: BTreeSet<String>,
+    /// Names the user gave dictionaries, by identifier.
+    names: BTreeMap<String, String>,
     /// Images inlined as `data:` URLs, by file path.
     images: RefCell<HashMap<PathBuf, Option<Rc<str>>>>,
 }
@@ -123,30 +125,60 @@ impl Library {
                 Err(e) => errors.push(format!("{}: {e}", path.display())),
             }
         }
-        dicts.sort_by(|a, b| {
-            a.meta()
-                .name
-                .to_lowercase()
-                .cmp(&b.meta().name.to_lowercase())
-        });
         let sizes = dicts.iter().map(|d| dir_size(d.path())).collect();
-        (
-            Self {
-                dir: dir.to_owned(),
-                dicts,
-                sizes,
-                disabled: BTreeSet::new(),
-                images: RefCell::default(),
-            },
-            errors,
-        )
+        let mut library = Self {
+            dir: dir.to_owned(),
+            dicts,
+            sizes,
+            disabled: BTreeSet::new(),
+            names: BTreeMap::new(),
+            images: RefCell::default(),
+        };
+        library.sort();
+        (library, errors)
     }
 
     pub fn reload(&mut self) -> Vec<String> {
         let (mut fresh, errors) = Self::open(&self.dir);
         fresh.disabled = std::mem::take(&mut self.disabled);
+        fresh.set_names(std::mem::take(&mut self.names));
         *self = fresh;
         errors
+    }
+
+    /// Orders the dictionaries by [`Library::name`], and returns the new
+    /// index of each dictionary by its old one.
+    fn sort(&mut self) -> Vec<usize> {
+        let dicts = std::mem::take(&mut self.dicts);
+        let sizes = std::mem::take(&mut self.sizes);
+        let mut items: Vec<_> = dicts.into_iter().zip(sizes).enumerate().collect();
+        items.sort_by_cached_key(|(_, (d, _))| self.display_name(d).to_lowercase());
+        let mut new_index = vec![0; items.len()];
+        for (new, (old, (dict, size))) in items.into_iter().enumerate() {
+            new_index[old] = new;
+            self.dicts.push(dict);
+            self.sizes.push(size);
+        }
+        new_index
+    }
+
+    fn display_name<'a>(&'a self, dict: &'a Dictionary) -> &'a str {
+        let meta = dict.meta();
+        self.names.get(&meta.identifier).unwrap_or(&meta.name)
+    }
+
+    /// The name shown for the dictionary: the one the user gave it, or the
+    /// one it came with.
+    pub fn name(&self, dict: usize) -> &str {
+        self.dicts.get(dict).map_or("", |d| self.display_name(d))
+    }
+
+    /// Sets the names the user gave dictionaries, by identifier, and orders
+    /// the dictionaries by name. Returns the new index of each dictionary by
+    /// its old one.
+    pub fn set_names(&mut self, names: BTreeMap<String, String>) -> Vec<usize> {
+        self.names = names;
+        self.sort()
     }
 
     pub fn dir(&self) -> &Path {
@@ -240,11 +272,11 @@ impl Library {
     /// when the importer recorded no headword.
     pub fn entry_window_title(&self, dict: usize, entry: u32) -> Option<String> {
         let d = self.dicts.get(dict)?;
-        let name = &d.meta().name;
+        let name = self.display_name(d);
         Some(
             match d.entry_label(entry).ok().and_then(|(title, _)| title) {
                 Some(title) => format!("{title} — {name}"),
-                None => name.clone(),
+                None => name.to_owned(),
             },
         )
     }
@@ -422,6 +454,26 @@ mod tests {
             word_edits: 1,
         });
         assert_eq!(matched(&fuzzy, "hous"), None);
+    }
+
+    #[test]
+    fn custom_names_replace_names_and_set_the_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_dict(tmp.path(), "a", "apple");
+        write_dict(tmp.path(), "b", "banana");
+        let (mut library, _) = Library::open(tmp.path());
+        assert_eq!([library.name(0), library.name(1)], ["A", "B"]);
+
+        let moved = library.set_names([("a".to_owned(), "Zebra".to_owned())].into());
+        assert_eq!(moved, [1, 0]);
+        assert_eq!([library.name(0), library.name(1)], ["B", "Zebra"]);
+        assert_eq!(library.position("a"), Some(1));
+        let title = library.entry_window_title(1, 0).unwrap();
+        assert!(title.ends_with("Zebra"), "{title}");
+
+        // Reloading keeps the names.
+        library.reload();
+        assert_eq!(library.name(1), "Zebra");
     }
 
     #[test]

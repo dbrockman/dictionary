@@ -7,7 +7,9 @@
 
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::component::group_box::GroupBox;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::label::Label;
 use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -164,20 +166,24 @@ impl AppView {
         }
         for (ix, dict) in self.library.dicts().iter().enumerate() {
             let meta = dict.meta();
-            let description = format!(
-                "{} entries · {} on disk",
-                format_count(meta.entry_count),
-                format_size(self.library.size_on_disk(ix))
-            );
+            let name = SharedString::from(self.library.name(ix).to_owned());
+            let description = v_flex()
+                .child(format!(
+                    "{} entries · {} on disk",
+                    format_count(meta.entry_count),
+                    format_size(self.library.size_on_disk(ix))
+                ))
+                .child(dict.path().display().to_string());
             let controls = self.render_dictionary_controls(
                 meta.identifier.clone().into(),
+                name.clone(),
                 meta.name.clone().into(),
                 self.library.is_enabled(ix),
                 cx,
             );
             group = group.child(setting_row(
                 SharedString::from(format!("dictionary-{}", meta.identifier)),
-                Some(meta.name.clone().into()),
+                Some(name),
                 description,
                 controls,
                 cx,
@@ -207,6 +213,7 @@ impl AppView {
         &self,
         identifier: SharedString,
         name: SharedString,
+        original_name: SharedString,
         enabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -214,6 +221,21 @@ impl AppView {
             let identifier = identifier.clone();
             move |this, enabled: &bool, window, cx| {
                 this.set_dictionary_enabled(&identifier, *enabled, window, cx)
+            }
+        });
+        let rename = cx.listener({
+            let identifier = identifier.clone();
+            let name = name.clone();
+            move |this, _: &ClickEvent, window, cx| {
+                window.focus(&this.focus_handle, cx);
+                open_rename_dialog(
+                    cx.weak_entity(),
+                    identifier.clone(),
+                    name.clone(),
+                    original_name.clone(),
+                    window,
+                    cx,
+                )
             }
         });
         let delete = cx.listener({
@@ -239,6 +261,12 @@ impl AppView {
                     .checked(enabled)
                     .tooltip("Include in searches")
                     .on_click(toggle),
+            )
+            .child(
+                Button::new(SharedString::from(format!("rename-{identifier}")))
+                    .outline()
+                    .label("Rename…")
+                    .on_click(rename),
             )
             .child(
                 Button::new(SharedString::from(format!("delete-{identifier}")))
@@ -372,6 +400,63 @@ fn setting_row(
                 ),
         )
         .child(controls)
+}
+
+/// Asks for a new name for a dictionary. Clearing the field restores the
+/// name it came with, which the field shows as its placeholder.
+fn open_rename_dialog(
+    view: WeakEntity<AppView>,
+    identifier: SharedString,
+    name: SharedString,
+    original_name: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let input = cx.new(|cx| {
+        InputState::new(window, cx)
+            .placeholder(original_name)
+            .default_value(name.clone())
+    });
+    window.open_dialog(cx, {
+        let input = input.clone();
+        move |dialog, _, cx| {
+            let view = view.clone();
+            let identifier = identifier.clone();
+            let input = input.clone();
+            dialog
+                .title(SharedString::from(format!("Rename “{name}”")))
+                .child(
+                    v_flex().gap_2().child(Input::new(&input)).child(
+                        Label::new("Leave it empty to use the dictionary’s own name.")
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground),
+                    ),
+                )
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            DialogClose::new()
+                                .child(Button::new("cancel-rename").outline().label("Cancel")),
+                        )
+                        .child(
+                            DialogAction::new()
+                                .child(Button::new("rename").primary().label("Rename")),
+                        ),
+                )
+                .on_ok(move |_, window, cx| {
+                    let name = input.read(cx).value();
+                    view.update(cx, |this, cx| {
+                        this.rename_dictionary(&identifier, &name, window, cx)
+                    })
+                    .ok();
+                    true
+                })
+        }
+    });
+    input.update(cx, |state, cx| {
+        state.focus(window, cx);
+        state.select_all(window, cx);
+    });
 }
 
 fn confirm_delete(

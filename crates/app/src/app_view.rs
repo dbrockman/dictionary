@@ -179,6 +179,7 @@ impl AppView {
         search.update(cx, |state, cx| state.focus(window, cx));
 
         library.set_disabled(settings.settings.disabled_dictionaries.clone());
+        library.set_names(settings.settings.dictionary_names.clone());
         let mut this = Self {
             mode: Mode::Dictionary,
             library,
@@ -637,20 +638,56 @@ impl AppView {
         let Some(ix) = self.library.position(identifier) else {
             return;
         };
-        let name = self.library.dicts()[ix].meta().name.clone();
+        let name = self.library.name(ix).to_owned();
         if let Err(e) = self.library.delete(ix) {
             let message = format!("Couldn’t delete all of {name}’s files: {e}");
             window.push_notification(Notification::error(message).autohide(false), cx);
         }
-        if self
-            .settings
-            .settings
-            .disabled_dictionaries
-            .remove(identifier)
-        {
+        let settings = &mut self.settings.settings;
+        let disabled = settings.disabled_dictionaries.remove(identifier);
+        let named = settings.dictionary_names.remove(identifier).is_some();
+        if disabled || named {
             self.save_settings(window, cx);
         }
         self.library_changed(cx);
+    }
+
+    /// Gives a dictionary a name of the user's choice. An empty name, or the
+    /// one the dictionary came with, restores that one.
+    fn rename_dictionary(
+        &mut self,
+        identifier: &str,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.library.position(identifier) else {
+            return;
+        };
+        let name = name.trim();
+        let names = &mut self.settings.settings.dictionary_names;
+        if name.is_empty() || name == self.library.dicts()[ix].meta().name {
+            names.remove(identifier);
+        } else {
+            names.insert(identifier.to_owned(), name.to_owned());
+        }
+        let names = names.clone();
+        self.save_settings(window, cx);
+
+        // The order follows the names, so whatever refers to dictionaries by
+        // index follows them to their new places.
+        let new_index = self.library.set_names(names);
+        self.scope = self.scope.map(|d| new_index[d]);
+        self.history.remap_dicts(|d| new_index[d]);
+        if let Some(shown) = &mut self.shown {
+            shown.page.dict = new_index[shown.page.dict];
+        }
+        self.rows = self.library.search(&self.query(cx), self.scope);
+        self.selected = None;
+        if let Some(page) = self.shown.as_ref().map(|s| s.page.clone()) {
+            self.sync_selection(&page);
+        }
+        cx.notify();
     }
 
     fn save_settings(&mut self, window: &mut Window, cx: &mut App) {
@@ -757,9 +794,7 @@ impl AppView {
         if enabled.len() < 2 {
             return None;
         }
-        let names = enabled
-            .iter()
-            .map(|&ix| self.library.dicts()[ix].meta().name.clone());
+        let names = enabled.iter().map(|&ix| self.library.name(ix).to_owned());
         Some(
             TabBar::new("scopes")
                 .underline()
@@ -837,8 +872,8 @@ impl AppView {
                                         };
                                         (range, bold)
                                     }));
-                                let dict_name = show_dict
-                                    .then(|| this.library.dicts()[row.dict].meta().name.clone());
+                                let dict_name =
+                                    show_dict.then(|| this.library.name(row.dict).to_owned());
                                 // Identity comes from what the row opens, not its position, so
                                 // element state does not pass to another row as results change.
                                 let meta = this.library.dicts()[row.dict].meta();
@@ -935,7 +970,7 @@ impl AppView {
             .flatten()
             .filter(|_| enabled.len() > 1)
             .map(|position| {
-                let name = self.library.dicts()[row.dict].meta().name.clone();
+                let name = self.library.name(row.dict).to_owned();
                 (SelectScope(position + 1), name)
             });
         let view = cx.weak_entity();
@@ -1039,7 +1074,7 @@ impl AppView {
             )
         } else if let Some(scope) = self.scope {
             // The word may be in another dictionary; offer to look there.
-            let name = &self.library.dicts()[scope].meta().name;
+            let name = self.library.name(scope);
             let search_all = Button::new("search-all")
                 .outline()
                 .label("Search all dictionaries")
