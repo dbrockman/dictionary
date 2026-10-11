@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2](https://github.com/dbrockman/dictionary/compare/v0.1.1...v0.1.2) - 2026-10-11
+
+### Added
+
+- Add custom dictionary names and show dictionary paths in settings
+
 ## [0.1.1](https://github.com/dbrockman/dictionary/compare/v0.1.0...v0.1.1) - 2026-10-11
 
 ### Added

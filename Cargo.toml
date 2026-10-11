@@ -4,15 +4,15 @@ default-members = ["crates/app"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/dbrockman/dictionary"
 publish = false
 
 [workspace.dependencies]
-dictdb = { version = "0.1.1", path = "crates/dictdb" }
-import = { version = "0.1.1", path = "crates/import" }
+dictdb = { version = "0.1.2", path = "crates/dictdb" }
+import = { version = "0.1.2", path = "crates/import" }
 
 [profile.release]
 lto = "thin"
