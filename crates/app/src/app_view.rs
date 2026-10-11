@@ -30,6 +30,7 @@ use serde::Deserialize;
 use crate::config::SettingsStore;
 use crate::history::{History, Page};
 use crate::library::{Library, Row};
+use crate::update::Release;
 use appearance::ThemeState;
 
 mod appearance;
@@ -113,6 +114,15 @@ impl ImportJob {
     }
 }
 
+/// Where checking for a newer release has got to.
+enum UpdateCheck {
+    NotChecked,
+    Checking,
+    /// The latest release, `None` if nothing is published yet, or why the
+    /// check failed.
+    Done(Result<Option<Release>, String>),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Dictionary,
@@ -140,6 +150,7 @@ pub struct AppView {
     window_title: SharedString,
     theme: ThemeState,
     import: Option<ImportJob>,
+    update_check: UpdateCheck,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -185,6 +196,7 @@ impl AppView {
             window_title: APP_NAME.into(),
             theme,
             import: None,
+            update_check: UpdateCheck::NotChecked,
             _subscriptions: subscriptions,
         };
         this.apply_themes(window, cx);
@@ -545,6 +557,26 @@ impl AppView {
             window.push_notification(note, cx);
         }
         self.library_changed(cx);
+    }
+
+    /// Asks GitHub for the latest release in the background.
+    fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.update_check, UpdateCheck::Checking) {
+            return;
+        }
+        self.update_check = UpdateCheck::Checking;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_spawn(async { crate::update::latest_release() })
+                .await;
+            this.update(cx, |this, cx| {
+                this.update_check = UpdateCheck::Done(result);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Resets everything that refers to dictionaries by index, after the set

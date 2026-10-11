@@ -8,6 +8,7 @@ mod config;
 mod history;
 mod library;
 mod themes;
+mod update;
 
 use std::path::PathBuf;
 use std::time::Instant;
