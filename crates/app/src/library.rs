@@ -172,7 +172,8 @@ impl Library {
     /// Prefix search over one dictionary (`scope`) or all enabled ones: exact
     /// matches, then headwords, then phrases (see [`Hit::tier`]), each by key
     /// and then by dictionary. Exact matches for an entry's own title come
-    /// first (see [`Hit::names_entry`]).
+    /// first (see [`Hit::names_entry`]), and fuzzy matches for a misspelled
+    /// query come last, fewest edits first (see [`Hit::fuzzy`]).
     pub fn search(&self, query: &str, scope: Option<usize>) -> Vec<Row> {
         let mut rows = Vec::new();
         for (index, dict) in self.dicts.iter().enumerate() {
@@ -191,7 +192,16 @@ impl Library {
         if scope.is_none() && self.dicts.len() > 1 {
             let query = dictdb::normalize_key(query);
             // Stable, so equal keys keep dictionary order.
-            let rank = |row: &Row| (row.hit.tier(&query), !row.hit.names_entry(&query));
+            let rank = |row: &Row| {
+                (
+                    row.hit.tier(&query),
+                    // Same order as `Dictionary::search` gives fuzzy hits.
+                    row.hit
+                        .fuzzy
+                        .map(|rank| (rank, row.hit.key.len().abs_diff(query.len()))),
+                    !row.hit.names_entry(&query),
+                )
+            };
             rows.sort_by(|a, b| (rank(a), &a.hit.key).cmp(&(rank(b), &b.hit.key)));
             rows.truncate(RESULT_LIMIT);
         }

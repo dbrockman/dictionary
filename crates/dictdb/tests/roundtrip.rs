@@ -190,10 +190,12 @@ fn ranks_exact_matches_then_headwords_then_phrases() {
     w.finish().unwrap();
 
     let d = Dictionary::open(&path).unwrap();
+    // Fuzzy matches, which follow these tiers, are tested separately.
     let titles = |q: &str, limit| -> Vec<String> {
         d.search(q, limit)
             .unwrap()
             .into_iter()
+            .filter(|h| h.fuzzy.is_none())
             .map(|h| h.title)
             .collect()
     };
@@ -260,4 +262,69 @@ fn exact_matches_for_an_entry_title_come_first() {
         .map(|h| h.entry)
         .collect();
     assert_eq!(entries, [set, jet_set]);
+}
+
+#[test]
+fn misspelled_queries_find_close_headwords() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("fuzzy.dictdb");
+    let mut w = DictWriter::create(&path, info()).unwrap();
+    for word in ["recommend", "recommendation", "recount", "house", "hose"] {
+        let e = w.add_entry(entry(word, word)).unwrap();
+        w.add_key(e, key(word));
+        if word == "hose" {
+            // An inflection that starts with a near miss but is not one.
+            w.add_key(e, key("hosed"));
+        }
+    }
+    let e = w.add_entry(entry("rec", "rec")).unwrap();
+    w.add_key(
+        e,
+        KeySpec {
+            keyword: "recomend it",
+            anchor: Some("recomend-it"),
+            ..Default::default()
+        },
+    );
+    w.finish().unwrap();
+
+    let d = Dictionary::open(&path).unwrap();
+    // Titles and (whole-key, prefix) edits.
+    let hits = |q: &str| -> Vec<(String, Option<(u8, u8)>)> {
+        d.search(q, 10)
+            .unwrap()
+            .into_iter()
+            .map(|h| (h.title, h.fuzzy.map(|f| (f.word_edits, f.prefix_edits))))
+            .collect()
+    };
+    let owned = |v: &[(&str, Option<(u8, u8)>)]| -> Vec<(String, Option<(u8, u8)>)> {
+        v.iter().map(|(t, f)| (t.to_string(), *f)).collect()
+    };
+    // The exact prefix (a phrase) comes first, then the closest headwords.
+    assert_eq!(
+        hits("recomend"),
+        owned(&[
+            ("recomend it", None),
+            ("recommend", Some((1, 1))),
+            ("recommendation", Some((3, 1))),
+        ])
+    );
+    // A misspelled partial word, still being typed.
+    assert_eq!(
+        hits("recomen")[1..],
+        owned(&[
+            ("recommend", Some((2, 1))),
+            ("recommendation", Some((2, 1)))
+        ])
+    );
+    // A transposition is one edit, and a key that is a near miss as a whole
+    // beats one that only starts with one ("hosed").
+    assert_eq!(
+        hits("huose"),
+        owned(&[("house", Some((1, 1))), ("hose", Some((1, 1)))])
+    );
+    // Short queries only match prefixes.
+    assert!(hits("hse").is_empty());
+    let hit = &d.search("huose", 1).unwrap()[0];
+    assert_eq!(hit.tier("huose"), 3);
 }

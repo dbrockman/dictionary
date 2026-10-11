@@ -68,7 +68,17 @@ fn benches(c: &mut Criterion) {
         d.meta().key_count,
         d.meta().entry_count
     );
-    for q in ["k", "ka", "kalo", "kaloberti", "zzz"] {
+    for q in [
+        "k",
+        "ka",
+        "kalo",
+        "kaloberti",
+        "zzz",
+        // Misspelled, so these also run a fuzzy search.
+        "kalobrti",
+        "klao",
+        "zzzzzzzz",
+    ] {
         c.bench_function(&format!("search {q:?} limit 200"), |b| {
             b.iter(|| d.search(black_box(q), 200).unwrap())
         });

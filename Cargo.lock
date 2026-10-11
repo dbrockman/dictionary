@@ -1585,6 +1585,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fst",
+ "levenshtein_automata",
  "lru",
  "memmap2",
  "serde",
@@ -3891,6 +3892,12 @@ name = "lebe"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
+
+[[package]]
+name = "levenshtein_automata"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c2cdeb66e45e9f36bfad5bbdb4d2384e70936afbee843c6f6543f0c551ebb25"
 
 [[package]]
 name = "libbz2-rs-sys"
