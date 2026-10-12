@@ -9,6 +9,14 @@ Dictionaries are imported once into the app's own memory-mapped format, so the
 app opens instantly and searches as you type. No dictionaries are bundled; you
 import your own.
 
+<p align="center">
+	<picture>
+		<source media="(prefers-color-scheme: dark)" srcset="./screenshot-dark.png">
+		<source media="(prefers-color-scheme: light)" srcset="./screenshot-light.png">
+		<img alt="The dictionary app showing search results for &quot;astonishing&quot; and its entry" src="./screenshot-light.png">
+	</picture>
+</p>
+
 ## Installing with Nix
 
 The flake builds the app for `x86_64-linux` and `aarch64-linux`. CI pushes the
