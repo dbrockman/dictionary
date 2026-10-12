@@ -211,18 +211,34 @@ impl AppView {
         &mut self,
         _: &Entity<InputState>,
         event: &InputEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         match event {
             InputEvent::Change => self.run_search(cx),
-            InputEvent::PressEnter { .. } => {
-                if let Some(ix) = self.selected {
-                    self.open_row(ix, true, cx);
-                }
-            }
+            InputEvent::PressEnter { .. } => self.accept_selection(window, cx),
             _ => {}
         }
+    }
+
+    /// Replaces the query with the selected result's word or phrase, which
+    /// completes a partial or misspelled query, and keeps its entry on screen.
+    fn accept_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(row) = self.selected.and_then(|ix| self.rows.get(ix)) else {
+            return;
+        };
+        let page = Page {
+            dict: row.dict,
+            entry: row.hit.entry,
+        };
+        let label = row.label().to_owned();
+        if label == self.query(cx).as_ref() {
+            return;
+        }
+        // The new search selects its first row, which may be the same word
+        // in another dictionary, so show the chosen entry again.
+        self.set_query(&label, window, cx);
+        self.show(page, false, cx);
     }
 
     /// Remembers the result list width the user dragged it to.
