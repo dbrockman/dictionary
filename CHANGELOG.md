@@ -3,6 +3,16 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3](https://github.com/dbrockman/dictionary/compare/v0.1.2...v0.1.3) - 2026-10-12
+
+### Added
+
+- Package the app as an AppImage that updates itself
+
+### Changed
+
+- Replace the query with the selected result when pressing Enter
+
 ## [0.1.2](https://github.com/dbrockman/dictionary/compare/v0.1.1...v0.1.2) - 2026-10-11
 
 ### Added
