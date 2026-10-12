@@ -17,6 +17,28 @@ import your own.
 	</picture>
 </p>
 
+## Installing the AppImage
+
+Each [release](https://github.com/dbrockman/dictionary/releases) has AppImages
+for `x86_64` and `aarch64`. They run on distributions with glibc 2.35 or newer
+(Ubuntu 22.04, Debian 12, Fedora 36 and later). Download one, make it
+executable and run it:
+
+```sh
+chmod +x Dictionary-*.AppImage
+./Dictionary-*.AppImage
+```
+
+The app uses the system's Wayland or X11, Vulkan, fontconfig and xkbcommon
+(including `libxkbcommon-x11`) libraries, which desktop installations have.
+Running an AppImage needs FUSE 2 (`libfuse2`); without it, pass
+`--appimage-extract-and-run`. On NixOS, install the app with Nix instead.
+
+The AppImage updates itself: in Settings, **Check for updates** offers
+**Install update** when a newer release is out, which replaces the AppImage
+file and restarts the app. The folder holding the AppImage must be writable.
+AppImageUpdate, Gear Lever and similar tools can update it too.
+
 ## Installing with Nix
 
 The flake builds the app for `x86_64-linux` and `aarch64-linux`. CI pushes the

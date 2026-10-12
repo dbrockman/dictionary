@@ -5,6 +5,8 @@
 //! GPUI Kit's `Settings` component would add a navigation sidebar and search
 //! for that one page.
 
+use std::sync::atomic::Ordering;
+
 use gpui_kit::component::WindowExt as _;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
@@ -326,25 +328,60 @@ impl AppView {
             UpdateCheck::Done(Ok(Some(_))) => Some(div().child("This is the latest version.")),
             UpdateCheck::Done(Ok(None)) => Some(div().child("No releases are published yet.")),
             UpdateCheck::Done(Err(error)) => Some(div().text_color(danger).child(error.clone())),
+            UpdateCheck::Installing { version, progress } => Some(div().child(format!(
+                "Downloading version {version}… {:.0}%",
+                f32::from_bits(progress.load(Ordering::Relaxed)) * 100.
+            ))),
+            UpdateCheck::Installed { version } => Some(div().child(format!(
+                "Version {version} is installed. Restart to use it."
+            ))),
         };
         let description = v_flex()
             .child(format!("Dictionary {VERSION}"))
             .children(status);
 
-        // Once a newer release is known, the button leads to it.
+        // Once a newer release is known, the AppImage can install it; other
+        // installs only lead to its page.
         let controls = match &self.update_check {
             UpdateCheck::Done(Ok(Some(release))) if release.is_newer() => {
                 let url = release.url.clone();
-                Button::new("view-release")
-                    .primary()
+                let view_release = Button::new("view-release")
                     .label("View release")
-                    .on_click(move |_, _, cx| cx.open_url(&url))
+                    .on_click(move |_, _, cx| cx.open_url(&url));
+                if self.can_install(release) {
+                    let release = release.clone();
+                    h_flex()
+                        .gap_2()
+                        .child(view_release.outline())
+                        .child(
+                            Button::new("install-update")
+                                .primary()
+                                .label("Install update")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.install_update(release.clone(), cx)
+                                })),
+                        )
+                        .into_any_element()
+                } else {
+                    view_release.primary().into_any_element()
+                }
             }
+            UpdateCheck::Installing { .. } => Button::new("install-update")
+                .primary()
+                .label("Install update")
+                .loading(true)
+                .into_any_element(),
+            UpdateCheck::Installed { .. } => Button::new("restart")
+                .primary()
+                .label("Restart")
+                .on_click(cx.listener(|this, _, _, cx| this.restart_after_update(cx)))
+                .into_any_element(),
             checking => Button::new("check-for-updates")
                 .outline()
                 .label("Check for updates")
                 .loading(matches!(checking, UpdateCheck::Checking))
-                .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx))),
+                .on_click(cx.listener(|this, _, _, cx| this.check_for_updates(cx)))
+                .into_any_element(),
         };
 
         let open_repository = Button::new("open-repository")

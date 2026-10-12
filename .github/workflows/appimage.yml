@@ -1,0 +1,76 @@
+name: AppImage
+
+# Builds AppImages for each release and attaches them to it. The release is
+# created by release.yml with a GitHub App token, so its `published` event
+# starts this workflow. Run it by hand with a tag to add AppImages to an
+# earlier release. Pull requests that touch the packaging only build.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload to, e.g. v0.1.2
+        required: true
+  pull_request:
+    paths:
+      - packaging/**
+      - .github/workflows/appimage.yml
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    # The oldest supported Ubuntu, so the binary needs only an old glibc.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG || github.sha }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libxkbcommon-x11-dev libxcb1-dev libwayland-dev libfontconfig-dev \
+            libfreetype-dev libvulkan-dev imagemagick file
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked -p app
+
+      - name: Package
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "app") | .version')
+          packaging/appimage.sh target/release/dictionary "$version" dist
+
+      - name: Upload to the release
+        if: env.TAG != ''
+        run: gh release upload "$TAG" dist/* --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/upload-artifact@v4
+        if: env.TAG == ''
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: dist/*
