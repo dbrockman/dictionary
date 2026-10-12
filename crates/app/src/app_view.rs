@@ -121,6 +121,16 @@ enum UpdateCheck {
     /// The latest release, `None` if nothing is published yet, or why the
     /// check failed.
     Done(Result<Option<Release>, String>),
+    /// Downloading `version` into the running AppImage. `progress` holds the
+    /// fraction done as `f32` bits.
+    Installing {
+        version: String,
+        progress: Arc<AtomicU32>,
+    },
+    /// The AppImage now holds `version`, which runs after a restart.
+    Installed {
+        version: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,6 +161,9 @@ pub struct AppView {
     theme: ThemeState,
     import: Option<ImportJob>,
     update_check: UpdateCheck,
+    /// The AppImage the app runs from, which an update can replace. `None`
+    /// when installed some other way, e.g. with Nix.
+    appimage: Option<PathBuf>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -198,6 +211,7 @@ impl AppView {
             theme,
             import: None,
             update_check: UpdateCheck::NotChecked,
+            appimage: crate::update::running_appimage(),
             _subscriptions: subscriptions,
         };
         this.apply_themes(window, cx);
@@ -594,6 +608,67 @@ impl AppView {
             .ok();
         })
         .detach();
+    }
+
+    /// Whether `release` can be installed over the running AppImage.
+    fn can_install(&self, release: &Release) -> bool {
+        self.appimage.is_some() && release.appimage.is_some()
+    }
+
+    /// Downloads `release` over the running AppImage in the background.
+    fn install_update(&mut self, release: Release, cx: &mut Context<Self>) {
+        let (Some(target), Some(asset)) = (self.appimage.clone(), release.appimage) else {
+            return;
+        };
+        let progress = Arc::new(AtomicU32::new(0));
+        self.update_check = UpdateCheck::Installing {
+            version: release.version.clone(),
+            progress: progress.clone(),
+        };
+        cx.notify();
+        let mut task = cx.background_spawn(async move {
+            crate::update::install_appimage(&asset, &target, |p| {
+                progress.store(p.to_bits(), Ordering::Relaxed)
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            // Redraw for the progress until the download finishes.
+            let result = loop {
+                let timer = cx.background_executor().timer(Duration::from_millis(100));
+                match futures::future::select(task, timer).await {
+                    futures::future::Either::Left((result, _)) => break result,
+                    futures::future::Either::Right((_, pending)) => task = pending,
+                }
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            };
+            this.update(cx, |this, cx| {
+                this.update_check = match result {
+                    Ok(()) => UpdateCheck::Installed {
+                        version: release.version,
+                    },
+                    Err(error) => UpdateCheck::Done(Err(error)),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Starts the updated AppImage and quits this instance.
+    fn restart_after_update(&mut self, cx: &mut Context<Self>) {
+        let Some(appimage) = &self.appimage else {
+            return;
+        };
+        match crate::update::relaunch(appimage) {
+            Ok(()) => cx.quit(),
+            Err(error) => {
+                self.update_check = UpdateCheck::Done(Err(error));
+                cx.notify();
+            }
+        }
     }
 
     /// Resets everything that refers to dictionaries by index, after the set
