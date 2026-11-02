@@ -93,8 +93,11 @@ fn import_cli(paths: &[PathBuf], library_dir: &std::path::Path) -> anyhow::Resul
 
 fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>) {
     let (library, errors) = Library::open(&library_dir);
-    let (settings, settings_error) = config::SettingsStore::load(&config::config_dir());
-    for error in errors.into_iter().chain(settings_error) {
+    let (settings, settings_error) =
+        config::SettingsStore::load(config::config_dir().join(config::SETTINGS_FILE));
+    let (state, state_error) =
+        config::StateStore::load(config::state_dir().join(config::STATE_FILE));
+    for error in errors.into_iter().chain(settings_error).chain(state_error) {
         eprintln!("{error}");
     }
     if let Some(t) = started {
@@ -126,7 +129,7 @@ fn run_gui(library_dir: PathBuf, word: Option<String>, started: Option<Instant>)
                 if let Some(t) = started {
                     window.on_next_frame(move |_, _| eprintln!("first frame: {:?}", t.elapsed()));
                 }
-                cx.new(|cx| AppView::new(library, settings, word, window, cx))
+                cx.new(|cx| AppView::new(library, settings, state, word, window, cx))
             })
             .expect("failed to open window");
             cx.activate(true);
