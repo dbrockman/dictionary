@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4](https://github.com/dbrockman/dictionary/compare/v0.1.3...v0.1.4) - 2026-11-02
+
+### Changed
+
+- Remember the selected dictionary between launches
+- Keep the selected dictionary and result list width in a state file
+
 ## [0.1.3](https://github.com/dbrockman/dictionary/compare/v0.1.2...v0.1.3) - 2026-10-12
 
 ### Added
