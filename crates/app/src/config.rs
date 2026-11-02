@@ -44,6 +44,10 @@ pub struct Settings {
     /// place of the names they came with.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub dictionary_names: BTreeMap<String, String>,
+    /// Identifier of the dictionary searches were last limited to, or `None`
+    /// for all of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     /// Width of the result list in rems, once the user has resized it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results_width: Option<f32>,
@@ -169,6 +173,7 @@ mod tests {
             .settings
             .dictionary_names
             .insert("com.example".into(), "Example".into());
+        store.settings.scope = Some("com.example".into());
         store.settings.appearance = Appearance::Dark;
         store.settings.dark_theme = Some("Ayu Dark".into());
         store.save().unwrap();

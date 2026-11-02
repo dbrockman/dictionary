@@ -214,6 +214,9 @@ impl AppView {
             appimage: crate::update::running_appimage(),
             _subscriptions: subscriptions,
         };
+        this.scope = this.saved_scope();
+        this.scope_scroll
+            .scroll_to_item(this.scope_tab(&this.enabled_dicts()));
         this.apply_themes(window, cx);
         if let Some(query) = initial_query {
             this.set_query(&query, window, cx);
@@ -461,15 +464,36 @@ impl AppView {
             .map_or(0, |position| position + 1)
     }
 
-    fn select_scope(&mut self, action: &SelectScope, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_scope(&mut self, action: &SelectScope, window: &mut Window, cx: &mut Context<Self>) {
         let enabled = self.enabled_dicts();
         if self.mode != Mode::Dictionary || enabled.len() < 2 || action.0 > enabled.len() {
             return;
         }
         let tab = action.0;
-        self.scope = tab.checked_sub(1).map(|position| enabled[position]);
+        let scope = tab.checked_sub(1).map(|position| enabled[position]);
+        self.set_scope(scope, window, cx);
         self.scope_scroll.scroll_to_item(tab);
         self.run_search(cx);
+    }
+
+    /// Restricts searches to one dictionary, or none, and remembers it for
+    /// the next start.
+    fn set_scope(&mut self, scope: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        self.scope = scope;
+        let identifier = scope.map(|ix| self.library.dicts()[ix].meta().identifier.clone());
+        if self.settings.settings.scope != identifier {
+            self.settings.settings.scope = identifier;
+            self.save_settings(window, cx);
+        }
+    }
+
+    /// The remembered scope, if that dictionary is still there, enabled, and
+    /// one of several to choose from.
+    fn saved_scope(&self) -> Option<usize> {
+        let ix = self
+            .library
+            .position(self.settings.settings.scope.as_deref()?)?;
+        (self.library.is_enabled(ix) && self.enabled_dicts().len() > 1).then_some(ix)
     }
 
     fn next_scope(&mut self, _: &NextScope, window: &mut Window, cx: &mut Context<Self>) {
@@ -675,7 +699,7 @@ impl AppView {
     /// of dictionaries changed.
     fn library_changed(&mut self, cx: &mut Context<Self>) {
         self.shown = None;
-        self.scope = None;
+        self.scope = self.saved_scope();
         self.history.clear();
         self.run_search(cx);
     }
@@ -718,7 +742,7 @@ impl AppView {
         self.library.set_disabled(disabled.clone());
         self.save_settings(window, cx);
         if self.scope.is_some_and(|s| !self.library.is_enabled(s)) {
-            self.scope = None;
+            self.set_scope(None, window, cx);
         }
         self.run_search(cx);
     }
@@ -737,7 +761,11 @@ impl AppView {
         let settings = &mut self.settings.settings;
         let disabled = settings.disabled_dictionaries.remove(identifier);
         let named = settings.dictionary_names.remove(identifier).is_some();
-        if disabled || named {
+        let scoped = settings
+            .scope
+            .take_if(|scope| scope == identifier)
+            .is_some();
+        if disabled || named || scoped {
             self.save_settings(window, cx);
         }
         self.library_changed(cx);
