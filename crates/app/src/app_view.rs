@@ -27,7 +27,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde::Deserialize;
 
-use crate::config::SettingsStore;
+use crate::config::{SettingsStore, StateStore};
 use crate::history::{History, Page};
 use crate::library::{Library, Row};
 use crate::update::Release;
@@ -143,6 +143,7 @@ pub struct AppView {
     mode: Mode,
     library: Library,
     settings: SettingsStore,
+    state: StateStore,
     search: Entity<InputState>,
     rows: Vec<Row>,
     selected: Option<usize>,
@@ -171,6 +172,7 @@ impl AppView {
     pub fn new(
         mut library: Library,
         settings: SettingsStore,
+        state: StateStore,
         initial_query: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -191,12 +193,13 @@ impl AppView {
         subscriptions.extend(theme_subscriptions);
         search.update(cx, |state, cx| state.focus(window, cx));
 
-        library.set_disabled(settings.settings.disabled_dictionaries.clone());
-        library.set_names(settings.settings.dictionary_names.clone());
+        library.set_disabled(settings.disabled_dictionaries.clone());
+        library.set_names(settings.dictionary_names.clone());
         let mut this = Self {
             mode: Mode::Dictionary,
             library,
             settings,
+            state,
             search,
             rows: Vec::new(),
             selected: None,
@@ -270,8 +273,8 @@ impl AppView {
             return;
         };
         let rems = (width / window.rem_size() * 10.).round() / 10.;
-        self.settings.settings.results_width = Some(rems);
-        self.save_settings(window, cx);
+        self.state.results_width = Some(rems);
+        self.save_state(window, cx);
     }
 
     fn query(&self, cx: &App) -> SharedString {
@@ -481,18 +484,16 @@ impl AppView {
     fn set_scope(&mut self, scope: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         self.scope = scope;
         let identifier = scope.map(|ix| self.library.dicts()[ix].meta().identifier.clone());
-        if self.settings.settings.scope != identifier {
-            self.settings.settings.scope = identifier;
-            self.save_settings(window, cx);
+        if self.state.scope != identifier {
+            self.state.scope = identifier;
+            self.save_state(window, cx);
         }
     }
 
     /// The remembered scope, if that dictionary is still there, enabled, and
     /// one of several to choose from.
     fn saved_scope(&self) -> Option<usize> {
-        let ix = self
-            .library
-            .position(self.settings.settings.scope.as_deref()?)?;
+        let ix = self.library.position(self.state.scope.as_deref()?)?;
         (self.library.is_enabled(ix) && self.enabled_dicts().len() > 1).then_some(ix)
     }
 
@@ -733,7 +734,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let disabled = &mut self.settings.settings.disabled_dictionaries;
+        let disabled = &mut self.settings.disabled_dictionaries;
         if enabled {
             disabled.remove(identifier);
         } else {
@@ -758,15 +759,18 @@ impl AppView {
             let message = format!("Couldn’t delete all of {name}’s files: {e}");
             window.push_notification(Notification::error(message).autohide(false), cx);
         }
-        let settings = &mut self.settings.settings;
-        let disabled = settings.disabled_dictionaries.remove(identifier);
-        let named = settings.dictionary_names.remove(identifier).is_some();
-        let scoped = settings
+        let disabled = self.settings.disabled_dictionaries.remove(identifier);
+        let named = self.settings.dictionary_names.remove(identifier).is_some();
+        if disabled || named {
+            self.save_settings(window, cx);
+        }
+        if self
+            .state
             .scope
             .take_if(|scope| scope == identifier)
-            .is_some();
-        if disabled || named || scoped {
-            self.save_settings(window, cx);
+            .is_some()
+        {
+            self.save_state(window, cx);
         }
         self.library_changed(cx);
     }
@@ -784,7 +788,7 @@ impl AppView {
             return;
         };
         let name = name.trim();
-        let names = &mut self.settings.settings.dictionary_names;
+        let names = &mut self.settings.dictionary_names;
         if name.is_empty() || name == self.library.dicts()[ix].meta().name {
             names.remove(identifier);
         } else {
@@ -814,6 +818,16 @@ impl AppView {
             let message = format!(
                 "Couldn’t save settings to {}: {e}",
                 self.settings.path().display()
+            );
+            window.push_notification(Notification::error(message).autohide(false), cx);
+        }
+    }
+
+    fn save_state(&mut self, window: &mut Window, cx: &mut App) {
+        if let Err(e) = self.state.save() {
+            let message = format!(
+                "Couldn’t save app state to {}: {e}",
+                self.state.path().display()
             );
             window.push_notification(Notification::error(message).autohide(false), cx);
         }
@@ -935,11 +949,7 @@ impl AppView {
     /// The result list and definition pane, with a draggable divider between.
     fn render_panes(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let rem = window.rem_size();
-        let width = self
-            .settings
-            .settings
-            .results_width
-            .unwrap_or(RESULTS_WIDTH);
+        let width = self.state.results_width.unwrap_or(RESULTS_WIDTH);
         h_resizable("panes")
             .with_state(&self.split)
             .child(

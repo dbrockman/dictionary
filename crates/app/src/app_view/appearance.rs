@@ -82,7 +82,7 @@ impl AppView {
         let (light_select, light_subscription) = new_select(ThemeMode::Light, window, cx);
         let (dark_select, dark_subscription) = new_select(ThemeMode::Dark, window, cx);
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
-            if this.settings.settings.appearance == Appearance::System {
+            if this.settings.appearance == Appearance::System {
                 Theme::change(window.appearance(), Some(window), cx);
             }
         });
@@ -174,7 +174,7 @@ impl AppView {
 
     /// The mode the app is in now: the configured one, or the system's.
     fn theme_mode(&self, window: &Window) -> ThemeMode {
-        match self.settings.settings.appearance {
+        match self.settings.appearance {
             Appearance::System => window.appearance().into(),
             Appearance::Light => ThemeMode::Light,
             Appearance::Dark => ThemeMode::Dark,
@@ -185,7 +185,7 @@ impl AppView {
     /// defaults, and makes them the active ones.
     pub(super) fn apply_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.theme.problems = [None, None];
-        let settings = &self.settings.settings;
+        let settings = &*self.settings;
         let themes = &self.theme.themes;
         let mut resolve = |mode: ThemeMode, name: Option<&str>| {
             themes.resolve(name, mode).unwrap_or_else(|problem| {
@@ -246,7 +246,7 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.settings.settings.appearance = appearance;
+        self.settings.appearance = appearance;
         self.save_settings(window, cx);
         Theme::change(self.theme_mode(window), Some(window), cx);
         cx.notify();
@@ -261,7 +261,7 @@ impl AppView {
     ) {
         // The default needs no setting, which keeps the file minimal.
         let name = (*name != self.theme.themes.default_for(mode).name).then(|| name.to_string());
-        let settings = &mut self.settings.settings;
+        let settings = &mut *self.settings;
         if mode.is_dark() {
             settings.dark_theme = name;
         } else {

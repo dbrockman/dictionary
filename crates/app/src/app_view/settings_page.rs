@@ -63,7 +63,7 @@ impl AppView {
             None => div().child(help),
         };
 
-        let current = self.settings.settings.appearance;
+        let current = self.settings.appearance;
         let mode = RadioGroup::horizontal("appearance")
             .children(CHOICES.map(|(_, label)| label))
             .selected_index(CHOICES.iter().position(|(choice, _)| *choice == current))

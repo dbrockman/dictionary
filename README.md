@@ -117,7 +117,11 @@ Imported dictionaries are stored in `~/.local/share/dictionary/` (Linux),
 Settings are saved in `settings.json` under `$XDG_CONFIG_HOME/dictionary/` when
 `XDG_CONFIG_HOME` is set (on any platform), otherwise `~/.config/dictionary/`
 (Linux), `~/Library/Application Support/Dictionary/` (macOS) or
-`%APPDATA%\Dictionary` (Windows).
+`%APPDATA%\Dictionary` (Windows). What the app restores at the next start,
+such as the selected dictionary, is saved in `state.json` under
+`$XDG_STATE_HOME/dictionary/`, otherwise `~/.local/state/dictionary/` (Linux),
+`~/Library/Application Support/Dictionary/` (macOS) or
+`%LOCALAPPDATA%\Dictionary` (Windows).
 
 ## Using
 
