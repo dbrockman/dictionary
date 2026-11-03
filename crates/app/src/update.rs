@@ -195,12 +195,17 @@ fn download(asset: &Asset, path: &Path, progress: impl Fn(f32)) -> Result<(), St
         received += n as u64;
         progress(received as f32 / asset.size.max(1) as f32);
     }
-    if received != asset.size || format!("{:x}", hasher.finalize()) != asset.sha256 {
+    if received != asset.size || hex(&hasher.finalize()) != asset.sha256 {
         return Err("The download was damaged, so the app wasn’t updated.".into());
     }
     file.set_permissions(fs::Permissions::from_mode(0o755))
         .map_err(write_error)?;
     file.sync_all().map_err(write_error)
+}
+
+/// Lowercase hex, as GitHub writes asset digests.
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Starts the AppImage at `path`, after an update. The caller then quits.
@@ -233,7 +238,7 @@ mod tests {
 
     use sha2::{Digest as _, Sha256};
 
-    use super::{Asset, AssetJson, appimage_asset, install_appimage, is_newer};
+    use super::{Asset, AssetJson, appimage_asset, hex, install_appimage, is_newer};
 
     #[test]
     fn compares_versions() {
@@ -301,7 +306,7 @@ mod tests {
             name: "Dictionary-0.2.0-x86_64.AppImage".into(),
             url,
             size: body.len() as u64,
-            sha256: format!("{:x}", Sha256::digest(body)),
+            sha256: hex(&Sha256::digest(body)),
         }
     }
 

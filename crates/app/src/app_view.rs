@@ -70,26 +70,37 @@ const SCOPE_TAB_MAX_WIDTH: f32 = 14.;
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("secondary-l", FocusSearch, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-f", FocusSearch, Some(KEY_CONTEXT)),
-        KeyBinding::new("alt-left", Back, Some(KEY_CONTEXT)),
-        KeyBinding::new("alt-right", Forward, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-[", Back, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-]", Forward, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-,", ToggleSettings, Some(KEY_CONTEXT)),
-        KeyBinding::new("escape", CloseSettings, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-tab", NextScope, Some(KEY_CONTEXT)),
-        KeyBinding::new("ctrl-shift-tab", PreviousScope, Some(KEY_CONTEXT)),
-        KeyBinding::new("secondary-q", Quit, None),
+        binding("secondary-l", FocusSearch, Some(KEY_CONTEXT), cx),
+        binding("secondary-f", FocusSearch, Some(KEY_CONTEXT), cx),
+        binding("alt-left", Back, Some(KEY_CONTEXT), cx),
+        binding("alt-right", Forward, Some(KEY_CONTEXT), cx),
+        binding("secondary-[", Back, Some(KEY_CONTEXT), cx),
+        binding("secondary-]", Forward, Some(KEY_CONTEXT), cx),
+        binding("secondary-,", ToggleSettings, Some(KEY_CONTEXT), cx),
+        binding("escape", CloseSettings, Some(KEY_CONTEXT), cx),
+        binding("ctrl-tab", NextScope, Some(KEY_CONTEXT), cx),
+        binding("ctrl-shift-tab", PreviousScope, Some(KEY_CONTEXT), cx),
+        binding("secondary-q", Quit, None, cx),
     ]);
     // Secondary-1 is "All", like the first tab in a browser.
-    cx.bind_keys((1..=9).map(|n| {
-        KeyBinding::new(
-            &format!("secondary-{n}"),
-            SelectScope(n - 1),
-            Some(KEY_CONTEXT),
-        )
-    }));
+    let scopes: Vec<_> = (1..=9)
+        .map(|n| {
+            binding(
+                &format!("secondary-{n}"),
+                SelectScope(n - 1),
+                Some(KEY_CONTEXT),
+                cx,
+            )
+        })
+        .collect();
+    cx.bind_keys(scopes);
+}
+
+/// A key binding whose `secondary-` modifier is cmd on macOS and ctrl
+/// elsewhere. `KeyBinding::new` only takes explicit modifiers.
+fn binding(keystrokes: &str, action: impl Action, context: Option<&str>, cx: &App) -> KeyBinding {
+    let context = context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
+    KeyBinding::load(keystrokes, Box::new(action), context, false, None, cx).unwrap()
 }
 
 /// The entry currently shown in the definition pane.
