@@ -3,6 +3,13 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5](https://github.com/dbrockman/dictionary/compare/v0.1.4...v0.1.5) - 2026-11-03
+
+### Changed
+
+- Update GPUI Kit to 0.9.0
+- Update dependencies
+
 ## [0.1.4](https://github.com/dbrockman/dictionary/compare/v0.1.3...v0.1.4) - 2026-11-02
 
 ### Changed
