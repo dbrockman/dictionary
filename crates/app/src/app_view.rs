@@ -9,7 +9,7 @@ use std::time::Duration;
 use gpui_kit::base::TextSelection;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
-    Escape, Input, InputEvent, InputState, MoveDown, MoveUp, SelectAll,
+    Copy, Escape, Input, InputEvent, InputState, MoveDown, MoveUp, SelectAll,
 };
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -80,6 +80,9 @@ pub fn bind_keys(cx: &mut App) {
         binding("escape", CloseSettings, Some(KEY_CONTEXT), cx),
         binding("ctrl-tab", NextScope, Some(KEY_CONTEXT), cx),
         binding("ctrl-shift-tab", PreviousScope, Some(KEY_CONTEXT), cx),
+        // Copies the selected result when focus is outside the search field
+        // and no text is selected in the definition pane.
+        binding("secondary-c", Copy, Some(KEY_CONTEXT), cx),
         binding("secondary-q", Quit, None, cx),
     ]);
     // Secondary-1 is "All", like the first tab in a browser.
@@ -270,6 +273,18 @@ impl AppView {
         // in another dictionary, so show the chosen entry again.
         self.set_query(&label, window, cx);
         self.show(page, false, cx);
+    }
+
+    /// Copies the selected result's word or phrase as plain text. Returns
+    /// whether there was one to copy.
+    fn copy_selected_word(&self, cx: &mut App) -> bool {
+        let row = self
+            .selected
+            .filter(|_| self.mode == Mode::Dictionary)
+            .and_then(|ix| self.rows.get(ix));
+        let Some(row) = row else { return false };
+        cx.write_to_clipboard(ClipboardItem::new_string(row.label().to_owned()));
+        true
     }
 
     /// Remembers the result list width the user dragged it to.
@@ -881,6 +896,15 @@ impl AppView {
                         this.move_selection(1, cx);
                         cx.stop_propagation();
                     }))
+                    // Copy takes the selected result's word unless text is
+                    // selected in the search field.
+                    .capture_action(cx.listener(|this, _: &Copy, _, cx| {
+                        if this.search.read(cx).selected_range().is_empty()
+                            && this.copy_selected_word(cx)
+                        {
+                            cx.stop_propagation();
+                        }
+                    }))
                     .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                         if this.query(cx).is_empty() {
                             cx.stop_propagation();
@@ -1325,6 +1349,9 @@ impl Render for AppView {
             .on_action(cx.listener(Self::select_scope))
             .on_action(cx.listener(Self::next_scope))
             .on_action(cx.listener(Self::previous_scope))
+            .on_action(cx.listener(|this, _: &Copy, _, cx| {
+                this.copy_selected_word(cx);
+            }))
             .on_key_down(cx.listener(Self::type_to_search))
             .size_full()
             .bg(cx.theme().background)
