@@ -248,7 +248,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "dictdb"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "criterion",
  "fst",
@@ -3373,7 +3373,7 @@ checksum = "6e44b0a4eaa4c82f441d50a963f2d5f05a787240aeee097597033e72accfd22f"
 
 [[package]]
 name = "import"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "dictdb",
  "flate2",
