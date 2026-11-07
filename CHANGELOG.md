@@ -3,6 +3,12 @@
 All notable changes to this project are documented in this file. The project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7](https://github.com/dbrockman/dictionary/compare/v0.1.6...v0.1.7) - 2026-11-07
+
+### Removed
+
+- Remove AppImage builds and self-update
+
 ## [0.1.6](https://github.com/dbrockman/dictionary/compare/v0.1.5...v0.1.6) - 2026-11-03
 
 ### Added
