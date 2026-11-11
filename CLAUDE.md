@@ -60,6 +60,6 @@ The workspace has three crates, forming a one-way pipeline: **import → dictdb 
 
 ## Files copied from GPUI Kit
 
-`.claude/skills/gpui-kit` and `.claude/skills/gpui-kit-design-guides` are copied unmodified from the GPUI Kit repository at tag `v0.9.0` (commit `7591a35`), matching the `gpui-kit = "0.9.0"` dependency. They are Apache-2.0 licensed (`.claude/skills/LICENSE-gpui-kit-APACHE`). When upgrading `gpui-kit`, replace them with the `skills/` directory from the matching release tag of https://github.com/longbridge/gpui-kit.
+`.claude/skills/gpui-kit` and `.claude/skills/gpui-kit-design-guides` are copied unmodified from the GPUI Kit repository at tag `v0.9.1` (commit `39ab849`), matching the `gpui-kit = "0.9.1"` dependency. They are Apache-2.0 licensed (`.claude/skills/LICENSE-gpui-kit-APACHE`). When upgrading `gpui-kit`, replace them with the `skills/` directory from the matching release tag of https://github.com/longbridge/gpui-kit.
 
 `crates/app/themes/*.json` are GPUI Kit's theme sets, copied unmodified from the same tag and embedded by `themes.rs`. Replace them together with the skills when upgrading (see `crates/app/themes/README.md`).
