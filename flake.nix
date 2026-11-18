@@ -44,7 +44,9 @@
           cargoLock.lockFile = ./Cargo.lock;
 
           nativeBuildInputs = [ pkgs.pkg-config pkgs.imagemagick ];
-          buildInputs = runtimeLibraries pkgs;
+          # nixpkgs' cargo setup hook sets ZSTD_SYS_USE_PKG_CONFIG, so zstd-sys
+          # links the system libzstd instead of building its bundled copy.
+          buildInputs = runtimeLibraries pkgs ++ [ pkgs.zstd ];
 
           # GPUI dlopens most of these, which an installed binary can only find
           # through its RPATH (the dev shell uses LD_LIBRARY_PATH instead).
