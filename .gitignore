@@ -25,3 +25,6 @@ rustc-ice-*.txt
 
 # Real dictionary bundles used for local testing (licensed content; never commit)
 /data/
+
+# Nix result link
+/result
