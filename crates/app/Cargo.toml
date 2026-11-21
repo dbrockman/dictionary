@@ -14,7 +14,7 @@ dictdb.workspace = true
 futures = "0.3.34"
 gpui-kit = "0.10.0"
 import.workspace = true
-notify = "8.2.1"
+notify = "9.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 ureq = { version = "3.5.1", default-features = false, features = ["json", "rustls"] }
